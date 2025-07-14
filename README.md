@@ -1,5 +1,5 @@
 # ArtKrit
-ArtKrit is a plugin for Krita that helps artists enhance their drawing skills by providing feedback on key aspects such as composition, value, and color. The plugin scaffolds the process of replicating a reference image into these three main components, offering computational guidance and automatic feedback along the way.
+ArtKrit is a plugin for Krita that helps artists enhance their drawing skills by providing feedback on composition, value, and color. The plugin scaffolds the process of replicating a reference image into these three main components, offering computational guidance and automatic feedback along the way.
 
 At each stage, ArtKrit generates adaptive composition lines and provides feedback on value and color accuracy to help artists refine their work.
 
