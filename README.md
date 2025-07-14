@@ -79,7 +79,7 @@ At each stage, ArtKrit generates adaptive composition lines and provides feedbac
 
 2. In another terminal, activate your environment and navigate to the `ArtKrit` folder. Then start the python server with:
     ```bash
-    python server.py
+    python script/composition/server.py
     ```
     Note, if you get an error, try running it with the specific python version: `python3.10 server.py`
 
