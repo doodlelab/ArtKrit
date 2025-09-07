@@ -1,11 +1,12 @@
+"""Main user interface for value and color tabs"""
+
 from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita, ManagedColor
-from PyQt5.QtCore import Qt, QPoint, QSize, QEvent, QRect, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QSlider, QLabel,
-    QFrame, QPushButton, QButtonGroup, QRadioButton, QFileDialog,
-    QHBoxLayout, QGridLayout, QSplitter, QScrollArea, QDialog, QGroupBox, QSizePolicy
+    QWidget, QVBoxLayout, QSlider, QLabel, QPushButton, QButtonGroup, QRadioButton,
+    QHBoxLayout, QSplitter, QScrollArea, QDialog, QGroupBox, QSizePolicy
 )
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPainterPath, QConicalGradient, QBrush
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPainterPath, QConicalGradient, QBrush
 import os
 import sys
 sys.path.append(os.path.expanduser("~/ddraw/lib/python3.10/site-packages"))
@@ -18,6 +19,7 @@ import os
 import time
 import sys
 from .category_data import ValueData, ColorData
+from .helpers import color_conversion, matching_algo, text_feedback
 
 class ValueButton(QPushButton):
     def __init__(self, value, hex_code, is_reference=False, parent=None):
@@ -271,6 +273,10 @@ class ValueColor(QWidget):
         self.scroll_area.setWidget(img_cont)
         layout.addWidget(self.scroll_area)
 
+        # Fill options group — store on self so activateLassoTool can show it
+        self.fillGroup = QGroupBox("Fill Options")
+        fv = QVBoxLayout(self.fillGroup)
+
         # Color tools & fill options
         tools = QGroupBox("Color Tools")
         tv = QVBoxLayout(tools)
@@ -387,52 +393,37 @@ class ValueColor(QWidget):
         """Display the image in the preview label."""
         if img is None:
             return
+                
+        # Convert BGR to RGB if the image is in BGR format
+        if len(img.shape) == 3 and img.shape[2] == 3:  # BGR image
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        elif len(img.shape) == 3 and img.shape[2] == 4:  # BGRA image
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
         
-        # Convert BGR to RGB if this is a color image and conversion is requested
+        # Convert to QImage/QPixmap based on the image type for display
+        if len(img.shape) == 2:  # Grayscale
+            height, width = img.shape
+            bytes_per_line = width
+            qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
+        else:  # RGB/RGBA
+            height, width, channels = img.shape
+            bytes_per_line = channels * width
+            if channels == 3:  # RGB
+                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            else:  # RGBA
+                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGBA8888)
+            
+        pixmap = QPixmap.fromImage(qimage)
         if is_color:
-            # Convert BGR to RGB if the image is in BGR format
-            if len(img.shape) == 3 and img.shape[2] == 3:  # BGR image
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            elif len(img.shape) == 3 and img.shape[2] == 4:  # BGRA image
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-            
-            # Convert to QImage/QPixmap based on the image type for display
-            if len(img.shape) == 2:  # Grayscale
-                height, width = img.shape
-                bytes_per_line = width
-                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
-            else:  # RGB/RGBA
-                height, width, channels = img.shape
-                bytes_per_line = channels * width
-                if channels == 3:  # RGB
-                    qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-                else:  # RGBA
-                    qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGBA8888)
-            
-            pixmap = QPixmap.fromImage(qimage)
             self.color_left_preview_label.setPixmap(pixmap.scaled(
             self.color_left_preview_label.width(), 
             self.color_left_preview_label.height(), 
             Qt.KeepAspectRatio))
-        
         else:
-            # Convert to QImage/QPixmap based on the image type
-            if len(img.shape) == 2:  # Grayscale
-                height, width = img.shape
-                bytes_per_line = width
-                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
-            else:  # RGB/BGR
-                height, width, channels = img.shape
-                bytes_per_line = channels * width
-                if channels == 3:  # RGB/BGR
-                    qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-                else:  # RGBA/BGRA
-                    qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGBA8888)
-            
-            pixmap = QPixmap.fromImage(qimage)
-            self.value_left_preview_label.setPixmap(pixmap.scaled(self.value_left_preview_label.width(), 
-                                                        self.value_left_preview_label.height(), 
-                                                        Qt.KeepAspectRatio))
+            self.value_left_preview_label.setPixmap(pixmap.scaled(
+            self.value_left_preview_label.width(), 
+            self.value_left_preview_label.height(), 
+            Qt.KeepAspectRatio))
 
     def upload_image(self, file_path):
         """Load the image, initialize blank/reference canvases for color & value, and display them."""
@@ -635,7 +626,7 @@ class ValueColor(QWidget):
         self.update_pairs(
             self.color_data,
             self.color_pairs_container_layout,
-            lambda rgb: self.rgb_to_hsv(rgb),  # convert RGB→HSV for display
+            lambda rgb: color_conversion.rgb_to_hsv(rgb),  # convert RGB→HSV for display
             self.show_pair_regions_color
         )
         
@@ -717,36 +708,19 @@ class ValueColor(QWidget):
         right_display = right_image.copy()
 
         # Convert images to display format
-        if is_color_analysis:
-            # Color display conversions
-            if len(left_display.shape) == 2:  # Grayscale
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_GRAY2RGB)
-            elif left_display.shape[2] == 4:  # RGBA
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_BGRA2RGB)
-            elif left_display.shape[2] == 3:  # BGR
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_BGR2RGB)
-            
-            if len(right_display.shape) == 2:  # Grayscale
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_GRAY2RGB)
-            elif right_display.shape[2] == 4:  # RGBA
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_BGRA2RGB)
-            elif right_display.shape[2] == 3:  # BGR
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_BGR2RGB)
-        else:
-            # Value display - ensure grayscale is shown as RGB for consistent display
-            if len(left_display.shape) == 2:  # Grayscale
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_GRAY2RGB)
-            elif left_display.shape[2] == 4:  # RGBA
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_BGRA2RGB)
-            elif left_display.shape[2] == 3:  # BGR
-                left_display = cv2.cvtColor(left_display, cv2.COLOR_BGR2RGB)
-                
-            if len(right_display.shape) == 2:  # Grayscale
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_GRAY2RGB)
-            elif right_display.shape[2] == 4:  # RGBA
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_BGRA2RGB)
-            elif right_display.shape[2] == 3:  # BGR
-                right_display = cv2.cvtColor(right_display, cv2.COLOR_BGR2RGB)
+        if len(left_display.shape) == 2:  # Grayscale
+            left_display = cv2.cvtColor(left_display, cv2.COLOR_GRAY2RGB)
+        elif left_display.shape[2] == 4:  # RGBA
+            left_display = cv2.cvtColor(left_display, cv2.COLOR_BGRA2RGB)
+        elif left_display.shape[2] == 3:  # BGR
+            left_display = cv2.cvtColor(left_display, cv2.COLOR_BGR2RGB)
+        
+        if len(right_display.shape) == 2:  # Grayscale
+            right_display = cv2.cvtColor(right_display, cv2.COLOR_GRAY2RGB)
+        elif right_display.shape[2] == 4:  # RGBA
+            right_display = cv2.cvtColor(right_display, cv2.COLOR_BGRA2RGB)
+        elif right_display.shape[2] == 3:  # BGR
+            right_display = cv2.cvtColor(right_display, cv2.COLOR_BGR2RGB)
 
         left_label = self.color_left_preview_label if is_color_analysis else self.value_left_preview_label
         right_label = self.color_right_preview_label if is_color_analysis else self.value_right_preview_label
@@ -806,89 +780,7 @@ class ValueColor(QWidget):
         # Combine into a list of points
         smoothed_points = np.array([x_new, y_new]).T.astype(np.int32)
         return smoothed_points.reshape(-1, 1, 2)  # Reshape for polylines function
-    
-    def calculate_bbox_overlap(self, bbox1, bbox2):
-        """Calculate the overlap ratio between two bounding boxes."""
-        if not bbox1 or not bbox2:
-            return 0.0
-                
-        x1, y1, w1, h1 = bbox1
-        x2, y2, w2, h2 = bbox2
-        
-        # Calculate coordinates of the intersection
-        x_left = max(x1, x2)
-        y_top = max(y1, y2)
-        x_right = min(x1 + w1, x2 + w2)
-        y_bottom = min(y1 + h1, y2 + h2)
-        
-        if x_right < x_left or y_bottom < y_top:
-            # No overlap
-            return 0.0
-        
-        intersection_area = (x_right - x_left) * (y_bottom - y_top)
-        
-        bbox1_area = w1 * h1
-        bbox2_area = w2 * h2
-        
-        union_area = bbox1_area + bbox2_area - intersection_area
-        
-        # Calculate IoU 
-        iou = intersection_area / union_area if union_area > 0 else 0.0
-        
-        return iou
-    
-    def calculate_color_similarity(self, hex1, hex2, is_color_analysis=False):
-        """
-        Calculate value‐similarity S_val between two hex colors per:
-        S_val = 1 - (1/3) * ||ΔLab|| after normalizing L*∈[0,1], a*∈[0,1], b*∈[0,1].
-        """
 
-        def hex_to_lab(hex_color):
-            # 1) Hex → sRGB [0–1]
-            r = int(hex_color[1:3], 16) / 255.0
-            g = int(hex_color[3:5], 16) / 255.0
-            b = int(hex_color[5:7], 16) / 255.0
-
-            def inv_gamma(c):
-                return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
-            r_lin, g_lin, b_lin = inv_gamma(r), inv_gamma(g), inv_gamma(b)
-
-            # 2) Linear RGB → XYZ (D65)
-            x = (r_lin * 0.4124564 + g_lin * 0.3575761 + b_lin * 0.1804375) * 100
-            y = (r_lin * 0.2126729 + g_lin * 0.7151522 + b_lin * 0.0721750) * 100
-            z = (r_lin * 0.0193339 + g_lin * 0.1191920 + b_lin * 0.9503041) * 100
-
-            # 3) Normalize by D65 white point
-            x, y, z = x / 95.047, y / 100.000, z / 108.883
-
-            # 4) XYZ → Lab
-            def f(t):
-                return t ** (1/3) if t > 0.008856 else (7.787 * t + 16/116)
-            fx, fy, fz = f(x), f(y), f(z)
-            L = 116 * fy - 16
-            a = 500 * (fx - fy)
-            b = 200 * (fy - fz)
-            return L, a, b
-
-        # Convert both hex colors to Lab
-        L1, a1, b1 = hex_to_lab(hex1)
-        L2, a2, b2 = hex_to_lab(hex2)
-
-        Ln1, an1, bn1 = L1 / 100.0, (a1 + 128) / 255.0, (b1 + 128) / 255.0
-        Ln2, an2, bn2 = L2 / 100.0, (a2 + 128) / 255.0, (b2 + 128) / 255.0
-
-        # Euclidean distance in the normalized cube (max = √3)
-        delta = np.sqrt(
-            (Ln1 - Ln2)**2 +
-            (an1 - an2)**2 +
-            (bn1 - bn2)**2
-        )
-
-        # Formula: S_val = 1 – (1/3) * Δ
-        similarity = 1.0 - (delta / 3.0)
-
-        # Clamp to [0,1]
-        return max(0.0, min(1.0, similarity))
         
     def match_values(self, is_color_analysis=False):
         """
@@ -956,11 +848,11 @@ class ValueColor(QWidget):
             for r_value, r_hex in reference_values_with_blobs:
                 r_bbox = reference_blobs[r_hex].bbox
 
-                # Calculate color similarity (weighted 40%)
-                color_similarity = self.calculate_color_similarity(c_hex, r_hex, is_color_analysis) * 0.50
+                # Calculate color similarity (weighted 50%)
+                color_similarity = matching_algo.calculate_color_similarity(c_hex, r_hex, is_color_analysis) * 0.50
                 
-                # Calculate spatial similarity (weighted 60%)
-                spatial_similarity = self.calculate_bbox_overlap(c_bbox, r_bbox) * 0.50
+                # Calculate spatial similarity (weighted 50%)
+                spatial_similarity = matching_algo.calculate_bbox_overlap(c_bbox, r_bbox) * 0.50
                 
                 # Total similarity is weighted sum
                 total_similarity = color_similarity + spatial_similarity
@@ -978,41 +870,6 @@ class ValueColor(QWidget):
                 matched_pairs[c_hex] = best_ref_hex
         
         return matched_pairs
-
-    def rgb_to_hsv(self, rgb):
-        """
-        Convert RGB tuple to HSV tuple using OpenCV, 
-        converting to standard display ranges.
-        
-        Args:
-            rgb (tuple): RGB color values (0-255 range)
-        
-        Returns:
-            tuple: HSV color values in standard ranges
-                Hue: 0-360
-                Saturation: 0-100
-                Value: 0-100
-        """
-        # Create a single pixel numpy array in RGB format
-        rgb_pixel = np.uint8([[[rgb[0], rgb[1], rgb[2]]]]) 
-        
-        # Convert RGB to HSV
-        hsv_pixel = cv2.cvtColor(rgb_pixel, cv2.COLOR_RGB2HSV)
-        
-        # Extract OpenCV HSV values
-        h, s, v = hsv_pixel[0, 0]
-        
-        # Convert to standard ranges
-        # Hue: 0-179 -> 0-360
-        h_standard = h * 2
-        
-        # Saturation: 0-255 -> 0-100
-        s_standard = round(s / 255 * 100)
-        
-        # Value: 0-255 -> 0-100
-        v_standard = round(v / 255 * 100)
-        
-        return (int(h_standard), int(s_standard), int(v_standard))
     
     def update_pairs(self, data, container_layout, transform, click_fn):
         """
@@ -1166,110 +1023,6 @@ class ValueColor(QWidget):
             os.makedirs(temp_dir, exist_ok=True)
             cv2.imwrite(os.path.join(temp_dir, "canvas_color_overlay.png"),   cv)
             cv2.imwrite(os.path.join(temp_dir, "reference_color_overlay.png"), rv)
-
-    def compute_hue_feedback(self, canvas_hsv, reference_hsv):
-        """Given two HSV triples (hue, saturation, value), return a string
-        explaining how your canvas hue/saturation compares to the reference."""
-        # Unpack the HSV components for clarity
-        canvas_hue, canvas_saturation, canvas_value = canvas_hsv
-        ref_hue, ref_saturation, ref_value = reference_hsv
-
-        # Helper: map a hue angle to its descriptive range name
-        def _hue_label(angle):
-            for start, end, name in self.hue_ranges:
-                if start <= angle < end:
-                    return name
-            return "unknown"
-
-        # Find which named bucket each hue falls into
-        canvas_label = _hue_label(canvas_hue)
-        ref_label = _hue_label(ref_hue)
-
-        hue_diff = canvas_hue - ref_hue
-        if ref_saturation:
-            sat_diff = (canvas_saturation - ref_saturation) / ref_saturation * 100
-        else:
-            sat_diff = 0
-
-        if canvas_label == ref_label:
-            if hue_diff == 0:
-                hue_feedback = "Your canvas matches the reference exactly in hue."
-            else:
-                direction = "warmer" if hue_diff > 0 else "cooler"
-                intensity = "slightly" if abs(hue_diff) < 10 else "quite"
-                hue_feedback = (
-                    f"You're in the same {canvas_label} range as the reference, "
-                    f"but the reference is {intensity} {direction}. "
-                    f"Consider adjusting to match more closely."
-                )
-        else:
-            direction = "warmer" if hue_diff > 0 else "cooler"
-            hue_feedback = (
-                f"Your canvas sits in the {canvas_label} range, "
-                f"while the reference sits in the {ref_label} range. "
-                f"You should move {direction} towards {ref_label}."
-            )
-
-        if sat_diff > 5:
-            sat_feedback = f"Your color is {abs(sat_diff):.1f}% more saturated than the reference."
-        elif sat_diff < -5:
-            sat_feedback = f"Your color is {abs(sat_diff):.1f}% less saturated than the reference."
-        else:
-            sat_feedback = "Your color has similar saturation to the reference."
-
-        feedback = "HSV Differences:\n"
-        feedback += f"Hue Difference: {hue_diff}°\n"
-        feedback += hue_feedback + "\n"
-        feedback += sat_feedback + "\n"
-
-        return feedback
-
-    def get_color_feedback(self, canvas_hsv, reference_hsv):
-        """Generate feedback about the color comparison."""
-        feedback = self.compute_hue_feedback(canvas_hsv, reference_hsv)
-        return feedback 
-
-    def get_value_feedback(self, canvas_value, ref_value):
-        """Generate feedback about the value comparison."""
-        # Calculate the difference between canvas and reference values
-        canvas_value = int(canvas_value)
-        ref_value = int(ref_value)
-        value_diff = canvas_value - ref_value
-        
-        feedback = ""
-        
-        # Set thresholds for differences
-        minor_threshold = 3
-        moderate_threshold = 20
-        major_threshold = 30
-        
-        if abs(value_diff) <= minor_threshold:
-            feedback = f"These values are closely matched (difference: {abs(value_diff)})"
-        else:
-            if value_diff < 0:
-                # Canvas is darker than reference
-                if abs(value_diff) > major_threshold:
-                    feedback = f"Canvas values are significantly too dark (by {abs(value_diff)} levels)"
-                elif abs(value_diff) > moderate_threshold:
-                    feedback = f"Canvas values are moderately too dark (by {abs(value_diff)} levels)"
-                else:
-                    feedback = f"Canvas values are slightly too dark (by {abs(value_diff)} levels)"
-            else:
-                # Canvas is lighter than reference
-                if abs(value_diff) > major_threshold:
-                    feedback = f"Canvas values are significantly too light (by {abs(value_diff)} levels)"
-                elif abs(value_diff) > moderate_threshold:
-                    feedback = f"Canvas values are moderately too light (by {abs(value_diff)} levels)"
-                else:
-                    feedback = f"Canvas values are slightly too light (by {abs(value_diff)} levels)"
-        
-        if abs(value_diff) > minor_threshold:
-            if value_diff < 0:
-                feedback += "\nSuggestion: Try lightening this area to better match the reference."
-            else:
-                feedback += "\nSuggestion: Try darkening this area to better match the reference."
-        
-        return feedback
     
     def show_pair_regions_color(self, canvas_hex, ref_hex):
         """Highlight the selected color pair on canvas and reference, and show feedback."""
@@ -1283,7 +1036,7 @@ class ValueColor(QWidget):
             return
 
         # feedback label
-        feedback = self.get_color_feedback(self.rgb_to_hsv(c_rgb), self.rgb_to_hsv(r_rgb))
+        feedback = text_feedback.get_color_feedback(color_conversion.rgb_to_hsv(c_rgb), color_conversion.rgb_to_hsv(r_rgb), self.hue_ranges)
         self.color_feedback_label.setText(feedback)
 
         # overlay & show
@@ -1299,7 +1052,7 @@ class ValueColor(QWidget):
         c_val = next((v for v,h in self.value_data.canvas_dominant    if h==canvas_hex), None)
         r_val = next((v for v,h in self.value_data.reference_dominant if h==ref_hex),    None)
         if c_val is not None and r_val is not None:
-            self.value_feedback_label.setText(self.get_value_feedback(c_val, r_val))
+            self.value_feedback_label.setText(text_feedback.get_value_feedback(c_val, r_val))
 
         # do exactly the same overlay→show, but in grayscale mode
         self.overlay_and_show(self.filtered_canvas, self.filtered_image,

@@ -13,7 +13,8 @@ class BlobInfo:
 class BaseCategoryData(ABC):
     """
     Abstract base class for a category of analysis (value vs. color).
-    Stores all state (maps, blobs, dominants, matches) Subclasses implement how to
+    Stores all state (maps, blobs, dominants, matches) and defines the
+    generic blob-creation routine. Subclasses implement how to
     threshold and extract dominants.
     """
     def __init__(self):
@@ -40,7 +41,7 @@ class BaseCategoryData(ABC):
     @abstractmethod
     def extract_dominant(self, image: np.ndarray, **kwargs) -> List[Tuple[Any, str]]:
         """
-        perform clustering return a list of
+        Perform clustering on `image` and return a list of
         (feature, hex_code) tuples. Feature is either a
         grayscale value or an RGB tuple.
         """
@@ -50,7 +51,7 @@ class BaseCategoryData(ABC):
                               image: np.ndarray,
                               use_canvas: bool = True) -> None:
         """
-        Generic blob-creation:
+        Generic blob-creation routine:
         - Chooses canvas vs. reference lists and maps
         - For each dominant feature, builds a mask via threshold_mask
         - Finds contours, records points and bbox
@@ -65,6 +66,7 @@ class BaseCategoryData(ABC):
         for feature, hex_code in dominants:
             # Threshold the image to get a binary mask
             mask = self.threshold_mask(image, feature)
+            # Find contours on the mask
             contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             blob = BlobInfo()
             blob.contours = contours
@@ -77,7 +79,7 @@ class BaseCategoryData(ABC):
                     all_pts.append((x, y))
             blob.points = all_pts
 
-            # compute bounding box
+            # Compute bounding box
             if all_pts:
                 xs, ys = zip(*all_pts)
                 x_min, x_max = min(xs), max(xs)
@@ -105,6 +107,7 @@ class ValueData(BaseCategoryData):
         else:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+        # Use OpenCV’s inRange to build the mask:
         # pixels in [lower, upper] → 255 (white), others → 0 (black)
         mask = cv2.inRange(gray, lower, upper)
 
@@ -116,6 +119,7 @@ class ValueData(BaseCategoryData):
         Find the most frequent gray levels in the image via k-means clustering.
         Returns a list of (value, hex_code) tuples, sorted by frequency descending.
         """
+        # Convert to a single-channel grayscale array if needed
         # If the image is already 2D, assume it's grayscale. Otherwise convert.
         if image.ndim == 2:
             gray = image
@@ -130,11 +134,11 @@ class ValueData(BaseCategoryData):
         unique_levels = np.unique(pixels).size
         K = min(num_values, unique_levels)
 
-        # k-means max 10 iters or epsilon 1.0
+        # Define k-means stopping criteria: max 10 iters or epsilon 1.0
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
 
         # Run k-means
-        # attempts=3, center-init via KMEANS_PP_CENTERS
+        # attempts=3 for robustness, center-init via KMEANS_PP_CENTERS
         _, labels, centers = cv2.kmeans(
             pixels,
             K,
@@ -163,7 +167,7 @@ class ValueData(BaseCategoryData):
 
 
 class ColorData(BaseCategoryData):
-    """RGB 'color' analysis."""
+    """Concrete for RGB 'color' analysis."""
     def threshold_mask(self, image, rgb):
         """
         Create a binary mask highlighting pixels whose color
@@ -182,11 +186,13 @@ class ColorData(BaseCategoryData):
         ], dtype=np.uint8)
 
         # Make sure the image is RGB (3 channels).
+        # If it has 4 channels (e.g. BGRA), convert it.
         if image.shape[2] == 3:
             img_rgb = image
         else:
             img_rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
 
+        # Use OpenCV to threshold: pixels in [lower,upper] become 255, rest 0
         mask = cv2.inRange(img_rgb, lower, upper)
 
         # Return the binary mask
@@ -209,10 +215,12 @@ class ColorData(BaseCategoryData):
         # From (H, W, 3) → (H*W, 3), and cast to float32
         pixels = rgb.reshape(-1, 3).astype(np.float32)
 
+        # Decide how many clusters to find
         # We can’t ask for more clusters than we have pixels
         K = min(num_values, pixels.shape[0])
 
-        # k-means max 10 iters or epsilon 1.0
+        # Set up k-means stopping criteria
+        # Stop either after 10 iterations or when movement < 1.0
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
 
         # Run k-means clustering
@@ -235,8 +243,11 @@ class ColorData(BaseCategoryData):
         # Build the result list, converting centers → ints + hex codes
         result = []
         for idx in order:
+            # Cluster center is floating-point BGR; convert to ints and reorder if needed
             r, g, b = [int(c) for c in centers[idx]]
+            # Format as hex string
             hex_code = f"#{r:02x}{g:02x}{b:02x}"
             result.append(((r, g, b), hex_code))
 
         return result
+
