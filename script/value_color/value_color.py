@@ -20,6 +20,8 @@ import time
 import sys
 from .category_data import ValueData, ColorData
 from .helpers import color_conversion, matching_algo, text_feedback
+from .helpers.lasso_fill_tool import LassoFillTool
+from .helpers.color_separation_tool import ColorSeparationTool
 
 class ValueButton(QPushButton):
     def __init__(self, value, hex_code, is_reference=False, parent=None):
@@ -89,9 +91,24 @@ class ValueColor(QWidget):
         
         self.value_pair_widgets = []
         self.color_pair_widgets = []
+
+         # Initialize lasso fill tool
+        self.lasso_fill_tool = LassoFillTool(self)
+        self.color_separation_tool = ColorSeparationTool(self)
+
         self.selectionTimer = QTimer()
         self.selectionTimer.setSingleShot(True)
-        self.selectionTimer.timeout.connect(self.checkSelection)
+        self.selectionTimer.timeout.connect(self.lasso_fill_tool.checkSelection)
+
+    def cleanup(self):
+        """Clean up resources"""
+        if hasattr(self, 'color_separation_tool'):
+            self.color_separation_tool.cleanup()
+        if hasattr(self, 'lasso_fill_tool'):
+            pass
+            
+    def __del__(self):
+        self.cleanup()
 
     def _make_preview_section(self, prefix, left_text, right_text):
         """
@@ -257,49 +274,28 @@ class ValueColor(QWidget):
             zoom_h.addWidget(btn)
         layout.addLayout(zoom_h)
 
-        # scrollable image container
-        self.scroll_area = QScrollArea(self.color_tab)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        img_cont = QWidget()
-        v = QVBoxLayout(img_cont)
-        self.image_label = ClusterHoverLabel(img_cont)
-        self.image_label.setMinimumSize(200,200)
-        self.image_label.clusterHovered.connect(self.update_cluster_info)
-        v.addWidget(self.image_label)
-
-        self.scroll_area.setWidget(img_cont)
+         # Create color separation UI
+        self.scroll_area, self.image_label = self.color_separation_tool.create_color_separation_ui()
         layout.addWidget(self.scroll_area)
-
-        # Fill options group — store on self so activateLassoTool can show it
-        self.fillGroup = QGroupBox("Fill Options")
-        fv = QVBoxLayout(self.fillGroup)
 
         # Color tools & fill options
         tools = QGroupBox("Color Tools")
         tv = QVBoxLayout(tools)
-        for txt, slot in (("Select Color",self.selectColor),
-                          ("Lasso Fill Tool",self.activateLassoTool)):
-            btn = QPushButton(txt)
-            btn.clicked.connect(slot)
-            tv.addWidget(btn)
 
-        fill_grp = QGroupBox("Fill Options")
-        fv = QVBoxLayout(fill_grp)
-        fc = QPushButton("Select Fill Color")
-        fc.clicked.connect(self.selectFillColor)
-        fc.setStyleSheet("background-color: #ffffff;")
-        fb = QPushButton("Fill Selection")
-        fb.clicked.connect(self.fillSelection)
-        fb.setEnabled(False)
-        fv.addWidget(fc)
-        fv.addWidget(fb)
-        fill_grp.setLayout(fv)
-        fill_grp.setVisible(False)
+        # Create the color button and store it as an attribute
+        self.colorButton = QPushButton("Select Color")
+        self.colorButton.clicked.connect(self.selectColor)
+        tv.addWidget(self.colorButton)
+        
+        # Create the lasso button and store it as an attribute
+        self.lassoButton = QPushButton("Lasso Fill Tool")
+        self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)  # Connect to lasso tool method
+        tv.addWidget(self.lassoButton)
 
-        tv.addWidget(fill_grp)
+        # Get fill widgets from lasso fill tool and add them
+        self.fillGroup, self.fillColorButton, self.fillButton = self.lasso_fill_tool.create_fill_widgets()
+        tv.addWidget(self.fillGroup)
+
         layout.addWidget(tools)
 
         # --- SHARED SECTIONS ---
@@ -324,21 +320,14 @@ class ValueColor(QWidget):
         self.current_labels = None
         self.current_colors = None
         self.current_groups = None
-        
-    ## Color hover 
+             
     def process_reference_image(self):
         """Process the stored reference image for color analysis"""
         if hasattr(self, 'color_reference_image') and self.color_reference_image is not None:
-            # Convert color space appropriately
-            if len(self.color_reference_image.shape) == 2:  # Grayscale
-                self.current_image = cv2.cvtColor(self.color_reference_image, cv2.COLOR_GRAY2RGB)
-            elif self.color_reference_image.shape[2] == 4:  # RGBA
-                self.current_image = cv2.cvtColor(self.color_reference_image, cv2.COLOR_BGRA2RGB)
-            else:  # BGR
-                self.current_image = cv2.cvtColor(self.color_reference_image, cv2.COLOR_BGR2RGB)
-            
-            self.update_cluster_count()
-             
+            # Make sure color_separation_tool has been initialized
+            if hasattr(self, 'color_separation_tool') and self.color_separation_tool is not None:
+                self.color_separation_tool.process_reference_image(self.color_reference_image)
+
     def update_cluster_count(self):
         """Recompute dominant color clusters and update the image label accordingly."""
         if self.current_image is None:
@@ -376,18 +365,7 @@ class ValueColor(QWidget):
         )
 
     def update_cluster_info(self, group_idx):
-        if self.current_colors is None or self.current_groups is None:
-            return
-
-        # Count pixels in this group
-        group_mask = np.isin(self.current_groups, [group_idx])
-        group_colors = self.current_colors[group_mask]
-
-        # Display group info
-        color_info = " | ".join(
-            f"RGB({c[0]}, {c[1]}, {c[2]})"
-            for c in group_colors
-        )
+        self.color_separation_tool.update_cluster_info(group_idx)
 
     def display_preview(self, img, is_color):
         """Display the image in the preview label."""
@@ -1461,116 +1439,3 @@ class SaturationValuePicker(QWidget):
         """
         return QColor.fromHsv(self.hue, self.saturation, self.value)
     
-    
-class ClusterHoverLabel(QLabel):
-    clusterHovered = pyqtSignal(int)  # Signal when cluster is hovered
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMouseTracking(True)
-        self.setAlignment(Qt.AlignCenter)
-        self.original_img = None
-        self.cluster_labels = None
-        self.dominant_colors = None
-        self.cluster_groups = None
-        self.current_pixmap = None
-        self._pixmap_offset = QPoint(0, 0)  # Track pixmap position within label
-        self._pixmap_scale = 1.0  # Track scaling factor
-
-    def setImageData(self, original_img, labels, colors, groups):
-        self.original_img = original_img
-        self.cluster_labels = labels
-        self.dominant_colors = colors
-        self.cluster_groups = groups
-
-        h, w = original_img.shape[:2]
-        bytes_per_line = 3 * w
-        qimg = QImage(original_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        self.current_pixmap = QPixmap.fromImage(qimg)
-        self.setPixmap(self.scalePixmap(self.current_pixmap))
-
-    def scalePixmap(self, pixmap):
-        if pixmap.isNull():
-            return pixmap
-
-        # Get available size from the parent scroll area
-        available_width = max(100, self.parent().width() - 20)
-        available_height = self.parent().height() - 20
-
-        # Calculate scaled size maintaining aspect ratio
-        pixmap_ratio = pixmap.width() / pixmap.height()
-        available_ratio = available_width / available_height
-
-        if pixmap_ratio > available_ratio:
-            scaled_width = available_width
-            scaled_height = int(scaled_width / pixmap_ratio)
-        else:
-            scaled_height = available_height
-            scaled_width = int(scaled_height * pixmap_ratio)
-
-        # Store scaling factor and offset for accurate coordinate mapping
-        self._pixmap_scale = scaled_width / pixmap.width()
-
-        # Calculate the centered position
-        self._pixmap_offset = QPoint(
-            (self.width() - scaled_width) // 2,
-            (self.height() - scaled_height) // 2
-        )
-
-        return pixmap.scaled(
-            scaled_width, scaled_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-
-    def mouseMoveEvent(self, event):
-        if self.original_img is None or self.current_pixmap is None:
-            return
-
-        # Convert mouse position to pixmap coordinates
-        pos = event.pos()
-
-        # Check if mouse is within the pixmap area
-        if not (self._pixmap_offset.x() <= pos.x() < self._pixmap_offset.x() + self.pixmap().width() and
-                self._pixmap_offset.y() <= pos.y() < self._pixmap_offset.y() + self.pixmap().height()):
-            self.leaveEvent(event)
-            return
-
-        # Calculate position in original image coordinates
-        pixmap_pos = QPoint(
-            int((pos.x() - self._pixmap_offset.x()) / self._pixmap_scale),
-            int((pos.y() - self._pixmap_offset.y()) / self._pixmap_scale)
-        )
-
-        # Ensure position is within bounds
-        if (0 <= pixmap_pos.x() < self.cluster_labels.shape[1] and
-            0 <= pixmap_pos.y() < self.cluster_labels.shape[0]):
-            cluster_idx = self.cluster_labels[pixmap_pos.y(), pixmap_pos.x()]
-            group_idx = self.cluster_groups[cluster_idx]
-
-            # Highlight all clusters in this group
-            highlighted = np.full_like(self.original_img, 255)  # White background
-            mask = np.isin(self.cluster_labels, [c for c, g in enumerate(self.cluster_groups) if g == group_idx])
-            highlighted[mask] = self.original_img[mask]
-
-            h, w = highlighted.shape[:2]
-            bytes_per_line = 3 * w
-            qimg = QImage(highlighted.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            self.current_pixmap = QPixmap.fromImage(qimg)
-            self.setPixmap(self.scalePixmap(self.current_pixmap))
-
-            self.clusterHovered.emit(group_idx)
-
-    def leaveEvent(self, event):
-        if self.original_img is not None:
-            h, w = self.original_img.shape[:2]
-            bytes_per_line = 3 * w
-            qimg = QImage(self.original_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            self.current_pixmap = QPixmap.fromImage(qimg)
-            self.setPixmap(self.scalePixmap(self.current_pixmap))
-        super().leaveEvent(event)
-
-    def resizeEvent(self, event):
-        if self.current_pixmap:
-            self.setPixmap(self.scalePixmap(self.current_pixmap))
-        super().resizeEvent(event)
