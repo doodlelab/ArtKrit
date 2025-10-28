@@ -15,11 +15,8 @@ import numpy as np
 import math
 from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import linkage, fcluster
-import os
-import time
-import sys
 from .category_data import ValueData, ColorData
-from .helpers import color_conversion, matching_algo, text_feedback
+from .helpers import color_conversion, image_conversion, matching_algo, text_feedback
 from .helpers.lasso_fill_tool import LassoFillTool
 from .helpers.color_separation_tool import ColorSeparationTool
 
@@ -83,7 +80,12 @@ class ValueColor(QWidget):
         self.color_image = None
         self.value_reference_image = None
         self.color_reference_image = None
-        self.canvas_image = None
+        # self.canvas_image = None
+
+        # Separate canvas images for color and value
+        self.value_canvas_image = None  # Grayscale canvas for value analysis
+        self.color_canvas_image = None  # Color canvas for color analysis
+
         self.current_filter = None
        
         self.value_data = ValueData()
@@ -371,25 +373,13 @@ class ValueColor(QWidget):
         """Display the image in the preview label."""
         if img is None:
             return
-                
-        # Convert BGR to RGB if the image is in BGR format
-        if len(img.shape) == 3 and img.shape[2] == 3:  # BGR image
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        elif len(img.shape) == 3 and img.shape[2] == 4:  # BGRA image
-            img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
         
-        # Convert to QImage/QPixmap based on the image type for display
-        if len(img.shape) == 2:  # Grayscale
-            height, width = img.shape
-            bytes_per_line = width
-            qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
-        else:  # RGB/RGBA
-            height, width, channels = img.shape
-            bytes_per_line = channels * width
-            if channels == 3:  # RGB
-                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            else:  # RGBA
-                qimage = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGBA8888)
+        # Convert to RGB for display using helper
+        rgb_img = image_conversion._to_rgb_for_display(img)
+        height, width, channels = rgb_img.shape
+        bytes_per_line = channels * width
+        qimage = QImage(rgb_img.data, width, height, bytes_per_line, QImage.Format_RGB888)
+
             
         pixmap = QPixmap.fromImage(qimage)
         if is_color:
@@ -416,12 +406,7 @@ class ValueColor(QWidget):
         self.display_split_view(blank_canvas, self.color_image, True)
         
         # For value analysis - convert to grayscale
-        self.value_image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-        if len(self.value_image.shape) == 3:
-            if self.value_image.shape[2] == 4:  # RGBA
-                self.value_image = cv2.cvtColor(self.value_image, cv2.COLOR_RGBA2GRAY)
-            else:  # BGR
-                self.value_image = cv2.cvtColor(self.value_image, cv2.COLOR_BGR2GRAY)
+        self.value_image = image_conversion._to_grayscale(cv2.imread(file_path, cv2.IMREAD_UNCHANGED))
         self.value_reference_image = self.value_image.copy()
         
         # Create a blank canvas for value view
@@ -455,15 +440,8 @@ class ValueColor(QWidget):
             return
 
         # Make a copy of the image to work with
-        working_image = self.value_image.copy()
-        
-        # Convert to grayscale first
-        if len(working_image.shape) == 3:
-            if working_image.shape[2] == 4:  # RGBA
-                working_image = cv2.cvtColor(working_image, cv2.COLOR_RGBA2GRAY)
-            else:  # BGR or RGB
-                working_image = cv2.cvtColor(working_image, cv2.COLOR_BGR2GRAY)
-
+        working_image = image_conversion._to_grayscale(self.value_image.copy())
+    
         # Calculate kernel size
         kernel_percentage = self.slider.value() / 10.0
         hw_max = max(working_image.shape[:2])
@@ -482,15 +460,15 @@ class ValueColor(QWidget):
             self.filtered_image = cv2.medianBlur(working_image, kernel_size)
 
         # Check if canvas_image has any non-zero values
-        if hasattr(self, 'canvas_image') and self.canvas_image is not None and np.any(self.canvas_image):
-            self.filtered_canvas = self.canvas_image.copy()
+        if hasattr(self, 'value_canvas_image') and self.value_canvas_image is not None and np.any(self.value_canvas_image):
+            canvas_gray = image_conversion._to_grayscale(self.value_canvas_image.copy())
             # Apply the same filter to canvas image
             if self.current_filter == "gaussian":
-                self.filtered_canvas = cv2.GaussianBlur(self.filtered_canvas, (kernel_size, kernel_size), 0)
+                self.filtered_canvas = cv2.GaussianBlur(canvas_gray, (kernel_size, kernel_size), 0)
             elif self.current_filter == "bilateral":
-                self.filtered_canvas = cv2.bilateralFilter(self.filtered_canvas, kernel_size, sigma_color, sigma_space)
+                self.filtered_canvas = cv2.bilateralFilter(canvas_gray, kernel_size, sigma_color, sigma_space)
             elif self.current_filter == "median":
-                self.filtered_canvas = cv2.medianBlur(self.filtered_canvas, kernel_size)
+                self.filtered_canvas = cv2.medianBlur(canvas_gray, kernel_size)
         else:
             self.filtered_canvas = np.zeros_like(self.filtered_image)
         
@@ -504,9 +482,19 @@ class ValueColor(QWidget):
             self.value_feedback_label.setText("⚠️ No document is open")
             return
 
-        if self.value_reference_image is None or self.filtered_image is None:
-            self.value_feedback_label.setText("⚠️ Please upload a reference image first and apply a filter")
+        if self.value_reference_image is None:
+            self.value_feedback_label.setText("⚠️ Please upload a reference image first")
             return
+        
+        # Apply default Gaussian filter if none selected
+        if not self.current_filter:
+            self.gaussian_radio.setChecked(True)
+            self.current_filter = "gaussian"
+            self.slider_label.show()
+            self.slider.show()
+        
+        if self.filtered_image is None:
+            self.update_preview()
         
         if self.filtered_image is not None:
             # Extract the 20 most dominant values from reference
@@ -516,20 +504,21 @@ class ValueColor(QWidget):
             self.value_data.create_map_with_blobs(self.filtered_image, use_canvas=False)
 
         # Get current canvas data
-        if hasattr(self, 'filtered_canvas') and self.filtered_canvas is not None:
-            pixel_array_gray = self.filtered_canvas
-        else:
-            pixel_array = self.get_canvas_data()
-            if pixel_array is None:
-                return
+        # if hasattr(self, 'filtered_canvas') and self.filtered_canvas is not None:
+        #     pixel_array_gray = image_conversion._to_grayscale(self.filtered_canvas)
+        # else:
+        #     pixel_array = self.get_canvas_data()
+        pixel_array = self.get_canvas_data()
+        if pixel_array is None:
+            return
+        
+        # Convert to grayscale using helper
+        pixel_array_gray = image_conversion._to_grayscale(pixel_array)
+        self.value_canvas_image = pixel_array_gray
 
-            # Convert pixel array to grayscale
-            if pixel_array.shape[2] == 4:  # BGRA format
-                pixel_array_gray = cv2.cvtColor(pixel_array, cv2.COLOR_BGRA2GRAY)
-            else:
-                pixel_array_gray = cv2.cvtColor(pixel_array, cv2.COLOR_BGR2GRAY)
-
-            self.canvas_image = pixel_array_gray
+        # self.canvas_image = pixel_array_gray
+        self.update_preview()
+        pixel_array_gray = self.filtered_canvas
 
         # Extract dominant values from canvas and reference
         self.value_data.canvas_dominant = (self.value_data.extract_dominant(pixel_array_gray, num_values=5))
@@ -573,8 +562,8 @@ class ValueColor(QWidget):
         pixel_array = cv2.resize(pixel_array, (doc_width//2, doc_height//2), interpolation=cv2.INTER_AREA)
 
         # Store the original canvas image without format conversion
-        self.canvas_image = pixel_array.copy()
-        self.filtered_canvas = self.canvas_image.copy()
+        self.color_canvas_image = pixel_array.copy()
+        self.color_filtered_canvas = self.color_canvas_image.copy()
         
         # Create a version for analysis (RGB)
         analysis_image = pixel_array.copy()
@@ -615,22 +604,30 @@ class ValueColor(QWidget):
 
     def show_all_matched_pairs(self, is_color_analysis=False):
         """Show all matched pairs together - reference with canvas regions and canvas with reference regions."""
-        if self.filtered_canvas is None:
-            return
-        
-        # create copies of the reference and canvas images for overlay
-        if (not is_color_analysis): 
-            if self.filtered_image is None:
+        if is_color_analysis:
+        # Use color canvas and color reference
+            if self.color_filtered_canvas is None or self.color_reference_image is None:
                 return
-            ref_with_regions = cv2.cvtColor(self.filtered_image.copy(), cv2.COLOR_GRAY2BGR)
-            canvas_with_regions = cv2.cvtColor(self.filtered_canvas.copy(), cv2.COLOR_GRAY2BGR)
-            matched_pairs = self.value_data.matched_pairs
-        else:
-            if self.color_reference_image is None:
-                return
+            
             ref_with_regions = self.color_reference_image.copy()
-            canvas_with_regions = self.filtered_canvas.copy()
+            canvas_with_regions = self.color_filtered_canvas.copy()
             matched_pairs = self.color_data.matched_pairs
+            
+            # Store canvas for region display
+            canvas_for_mask = self.color_filtered_canvas
+            ref_for_mask = self.color_reference_image
+        else:
+            # Use grayscale canvas and grayscale reference
+            if self.filtered_canvas is None or self.filtered_image is None:
+                return
+            
+            ref_with_regions = image_conversion._to_bgr(self.filtered_image)
+            canvas_with_regions = image_conversion._to_bgr(self.filtered_canvas)
+            matched_pairs = self.value_data.matched_pairs
+            
+            # Store canvas for region display
+            canvas_for_mask = self.filtered_canvas
+            ref_for_mask = self.filtered_image
 
         # Store 5 colors for getting all matched pairs
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (128, 0, 128)]
@@ -640,9 +637,9 @@ class ValueColor(QWidget):
         for canvas_hex, ref_hex in matched_pairs.items():
             #  region masks
             cur_color = colors[i % len(colors)]
-            canvas_mask = self.get_region_mask(self.filtered_canvas, canvas_hex, is_color_analysis)
+            canvas_mask = self.get_region_mask(canvas_for_mask, canvas_hex, is_color_analysis)
             if (is_color_analysis):
-                ref_mask = self.get_region_mask(self.color_reference_image, ref_hex, is_color_analysis)
+                ref_mask = self.get_region_mask(ref_for_mask, ref_hex, is_color_analysis)
             else:
                 ref_mask = self.get_region_mask(self.filtered_image, ref_hex, is_color_analysis)
 
@@ -681,24 +678,8 @@ class ValueColor(QWidget):
             right_image: Second image to display (numpy array) - or reference
             is_color: Whether to handle as color images (True) or values (False)
         """
-        # Create copies to avoid modifying originals
-        left_display = left_image.copy()
-        right_display = right_image.copy()
-
-        # Convert images to display format
-        if len(left_display.shape) == 2:  # Grayscale
-            left_display = cv2.cvtColor(left_display, cv2.COLOR_GRAY2RGB)
-        elif left_display.shape[2] == 4:  # RGBA
-            left_display = cv2.cvtColor(left_display, cv2.COLOR_BGRA2RGB)
-        elif left_display.shape[2] == 3:  # BGR
-            left_display = cv2.cvtColor(left_display, cv2.COLOR_BGR2RGB)
-        
-        if len(right_display.shape) == 2:  # Grayscale
-            right_display = cv2.cvtColor(right_display, cv2.COLOR_GRAY2RGB)
-        elif right_display.shape[2] == 4:  # RGBA
-            right_display = cv2.cvtColor(right_display, cv2.COLOR_BGRA2RGB)
-        elif right_display.shape[2] == 3:  # BGR
-            right_display = cv2.cvtColor(right_display, cv2.COLOR_BGR2RGB)
+        left_display = image_conversion._to_rgb_for_display(left_image)
+        right_display = image_conversion._to_rgb_for_display(right_image)
 
         left_label = self.color_left_preview_label if is_color_analysis else self.value_left_preview_label
         right_label = self.color_right_preview_label if is_color_analysis else self.value_right_preview_label
@@ -1004,7 +985,7 @@ class ValueColor(QWidget):
     
     def show_pair_regions_color(self, canvas_hex, ref_hex):
         """Highlight the selected color pair on canvas and reference, and show feedback."""
-        if self.color_reference_image is None or self.canvas_image is None:
+        if self.color_reference_image is None or self.color_canvas_image is None:
             return
 
         # look up the two RGBs, bail if missing
@@ -1018,7 +999,7 @@ class ValueColor(QWidget):
         self.color_feedback_label.setText(feedback)
 
         # overlay & show
-        self.overlay_and_show(self.canvas_image, self.color_reference_image,
+        self.overlay_and_show(self.color_canvas_image, self.color_reference_image,
                                canvas_hex, ref_hex, is_color=True)
 
     def show_pair_regions_value(self, canvas_hex, ref_hex):
@@ -1247,17 +1228,23 @@ class ValueColor(QWidget):
             self.value_feedback_label.setText("⚠️ No document is open")
             return
 
-        # Convert to grayscale
-        if pixel_array.shape[2] == 4:  # BGRA format
-            pixel_array_gray = cv2.cvtColor(pixel_array, cv2.COLOR_BGRA2GRAY)
-        else:
-            pixel_array_gray = cv2.cvtColor(pixel_array, cv2.COLOR_BGR2GRAY)
+        # self.canvas_image = image_conversion._to_grayscale(pixel_array)
+        self.value_canvas_image = image_conversion._to_grayscale(pixel_array)
 
-        self.canvas_image = pixel_array_gray
-
+        # Apply default Gaussian filter if no filter is selected
+        if not self.current_filter:
+            self.gaussian_radio.setChecked(True)
+            self.current_filter = "gaussian"
+            self.slider_label.show()
+            self.slider.show()
+        
+        # Apply the filter to create filtered_canvas
+        self.update_preview()
+        
         # Display the grayscale image
-        self.display_preview(pixel_array_gray, False)
-        self.value_feedback_label.setText("✅ Showing current canvas in grayscale")
+        self.display_preview(self.value_canvas_image, False)
+        # self.value_feedback_label.setText("✅ Showing current canvas in grayscale")
+
 
 
 class CustomHSColorPickerDialog(QDialog):
