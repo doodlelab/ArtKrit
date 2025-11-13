@@ -297,10 +297,10 @@ class ValueColor(QWidget):
         tools = QGroupBox("Color Tools")
         tv = QVBoxLayout(tools)
 
-        # Create the color button and store it as an attribute
-        self.colorButton = QPushButton("Select Color")
-        self.colorButton.clicked.connect(self.selectColor)
-        tv.addWidget(self.colorButton)
+        # # Create the color button and store it as an attribute
+        # self.colorButton = QPushButton("Select Color")
+        # self.colorButton.clicked.connect(self.selectColor)
+        # tv.addWidget(self.colorButton)
         
         # Create the lasso button and store it as an attribute
         self.lassoButton = QPushButton("Lasso Fill Tool")
