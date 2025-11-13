@@ -44,18 +44,21 @@ def rgb_to_hsv(rgb):
             Saturation: 0-100
             Value: 0-100
     """
-    # Create a single pixel numpy array in RGB format
-    rgb_pixel = np.uint8([[[rgb[0], rgb[1], rgb[2]]]]) 
+    print(f"DEBUG: Input RGB = {rgb}")
+    # Create a single pixel numpy array in BGR format (OpenCV's native format)
+    bgr_pixel = np.uint8([[[rgb[2], rgb[1], rgb[0]]]])  # ← BGR order: B, G, R
+    print(f"DEBUG: BGR pixel = {bgr_pixel[0, 0]}")  # ← Add this line
     
-    # Convert RGB to HSV
-    hsv_pixel = cv2.cvtColor(rgb_pixel, cv2.COLOR_RGB2HSV)
+    # Convert BGR to HSV
+    hsv_pixel = cv2.cvtColor(bgr_pixel, cv2.COLOR_BGR2HSV)
     
     # Extract OpenCV HSV values
     h, s, v = hsv_pixel[0, 0]
     
     # Convert to standard ranges
     # Hue: 0-179 -> 0-360
-    h_standard = h * 2
+    h_standard = int(h) * 2      
+    print(f"hue: {h}")
     
     # Saturation: 0-255 -> 0-100
     s_standard = round(s / 255 * 100)

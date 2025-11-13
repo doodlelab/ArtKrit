@@ -29,7 +29,7 @@ class ValueButton(QPushButton):
         self.matched_button = None
         self.setMinimumSize(60, 60)
         self.setMaximumSize(60, 60)
-        border_style = "2px solid #00FF00" if is_reference else "1px solid #888888"
+        border_style = "1px solid #888888"
         self.setStyleSheet(f"background-color: {hex_code}; border: {border_style};")
         self.setToolTip(hex_code)
         
@@ -37,23 +37,24 @@ class ValueButton(QPushButton):
         self.matched_button = button
 
 class ValuePairWidget(QWidget):
-    """Display a matched canvas–reference value pair with interactive buttons."""
+    clicked = pyqtSignal(object)   # emitted when this pair is clicked
+
     def __init__(self, canvas_rgb, canvas_hex, ref_rgb, ref_hex, parent=None):
         super().__init__(parent)
         self.canvas_hex = canvas_hex
         self.ref_hex = ref_hex
-        
         layout = QHBoxLayout()
         layout.setSpacing(5)
         self.setLayout(layout)
-        
         # Create buttons
         self.canvas_button = ValueButton(canvas_rgb, canvas_hex, is_reference=False)
-        self.ref_button = ValueButton(ref_rgb, ref_hex, is_reference=True)
-        self.canvas_button.set_matched_button(self.ref_button)
-        self.ref_button.set_matched_button(self.canvas_button)
-        
-        # Labels
+        self.ref_button    = ValueButton(ref_rgb, ref_hex, is_reference=True)
+
+        # Connect both buttons to emit clicked(self)
+        self.canvas_button.clicked.connect(self._emit_clicked)
+        self.ref_button.clicked.connect(self._emit_clicked)
+
+        # Create labels
         canvas_label = QLabel(f"{canvas_rgb}")
         canvas_label.setAlignment(Qt.AlignCenter)
         canvas_label.setStyleSheet("color: white; background-color: #333333; padding: 2px;")
@@ -61,16 +62,28 @@ class ValuePairWidget(QWidget):
         ref_label = QLabel(f"{ref_rgb}")
         ref_label.setAlignment(Qt.AlignCenter)
         ref_label.setStyleSheet("color: white; background-color: #333333; padding: 2px;")
+
         arrow_label = QLabel("→")
-        arrow_label.setStyleSheet("color: #FFFF00; font-size: 16px; font-weight: bold;")
         arrow_label.setAlignment(Qt.AlignCenter)
-        
-        # Add widgets to layout
+        arrow_label.setStyleSheet("color: #FFFF00; font-size: 16px; font-weight: bold;")
+
         layout.addWidget(self.canvas_button)
         layout.addWidget(canvas_label)
         layout.addWidget(arrow_label)
         layout.addWidget(ref_label)
         layout.addWidget(self.ref_button)
+
+    def _emit_clicked(self):
+        """Emit signal when either button is clicked."""
+        self.clicked.emit(self)
+
+    def set_highlight(self, enabled):
+        """Highlight this pair green if selected."""
+        if enabled:
+            self.setStyleSheet("background-color: rgba(0,255,0,60); border: 2px solid #00FF00;")
+        else:
+            self.setStyleSheet("")
+
 
 class ValueColor(QWidget):
     """Widget for loading images, applying filters, and showing value/color analyses."""
@@ -847,19 +860,40 @@ class ValueColor(QWidget):
             if w:
                 w.deleteLater()
 
-        # Re-build widgets
+        # Determine which selection attribute we use
+        is_color_tab = ("color" in container_layout.parent().objectName())
+        selected_attr = "selected_color_pair" if is_color_tab else "selected_value_pair"
+
+        # Reset selection
+        setattr(self, selected_attr, None)
+
+        # Rebuild widgets
         for canvas_hex, ref_hex in data.matched_pairs.items():
+
+            # Get feature values
             left_feat  = next(v for v, h in data.canvas_dominant    if h == canvas_hex)
             right_feat = next(v for v, h in data.reference_dominant if h == ref_hex)
 
-            # transform it for display (e.g. value→value or rgb→hsv)
+            # Convert to display (identity or hsv)
             left_disp  = transform(left_feat)
             right_disp = transform(right_feat)
 
             pair = ValuePairWidget(left_disp, canvas_hex, right_disp, ref_hex)
+
+            # Clicking the color boxes triggers region display
             pair.canvas_button.clicked.connect(lambda _, c=canvas_hex, r=ref_hex: click_fn(c, r))
-            pair.ref_button   .clicked.connect(lambda _, c=canvas_hex, r=ref_hex: click_fn(c, r))
-            # add to the UI
+            pair.ref_button.clicked.connect(lambda _, c=canvas_hex, r=ref_hex: click_fn(c, r))
+
+            # Click on widget → highlight only this one
+            def on_pair_clicked(p=pair, attr=selected_attr):
+                prev = getattr(self, attr)
+                if prev is not None:
+                    prev.set_highlight(False)
+
+                setattr(self, attr, p)
+                p.set_highlight(True)
+
+            pair.clicked.connect(on_pair_clicked)
             container_layout.addWidget(pair)
 
     def get_region_mask(self, image, hex_code, is_color_analysis=False):
@@ -923,7 +957,7 @@ class ValueColor(QWidget):
         (90, 150, "green"),
         (150, 210, "cyan"),
         (210, 270, "blue"),
-        (270, 330, "magenta")
+        (270, 360, "magenta")
     ]
 
     def get_significant_contours(self, mask: np.ndarray, min_area: int = 150):

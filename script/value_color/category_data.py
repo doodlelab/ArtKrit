@@ -206,7 +206,8 @@ class ColorData(BaseCategoryData):
         # Ensure it is an RGB array (drop alpha if present)
         # If the image has 3 channels, assume it's already RGB
         if image.shape[2] == 3:
-            rgb = image
+            # rgb = image
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
             # Convert BGRA → RGB, discarding alpha
             rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
