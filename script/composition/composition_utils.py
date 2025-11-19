@@ -64,19 +64,45 @@ def annotate(image: Union[Image.Image, np.ndarray], detection_results: List[Dete
 
         # If mask is available, apply it
         if mask is not None:
-            # Convert mask to uint8
-            mask_uint8 = (mask * 255).astype(np.uint8)
+            # Convert mask (various possible dtypes/ranges) to binary uint8 (0/255)
+            if isinstance(mask, np.ndarray):
+                m = mask
+                if m.dtype != np.uint8:
+                    # if in [0,1] float, scale; else cast
+                    if np.max(m) <= 1.0:
+                        m = (m.astype(np.float32) * 255.0).astype(np.uint8)
+                    else:
+                        m = m.astype(np.uint8)
+                # ensure binary
+                mask_uint8 = (m > 127).astype(np.uint8) * 255
+            else:
+                # unsupported mask type
+                print(f"[Annotate] Unsupported mask type: {type(mask)}; skipping")
+                continue
             contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             approx_contours = []
             approx_contours_list = []
+            image_height, image_width = image_cv2.shape[:2]
+            image_area = float(image_height * image_width)
             for contour in contours:
+                # Filter out tiny blobs and near-full-frame masks
+                area = cv2.contourArea(contour)
+                if area < 100:  # too small
+                    continue
+                if area / image_area > 0.85:  # too big (likely combined mask)
+                    continue
                 # Normalize each point in contour by the image width and height
-                image_height, image_width = image_cv2.shape[:2]
                 uv_points = np.array([(point[0] / image_width, point[1] / image_height) for point in contour.reshape(-1, 2)], dtype=np.float32)
                 normalized_arc_length = cv2.arcLength(uv_points, True)
-                epsilon = parameters['polygon_epsilon'] * normalized_arc_length
-                approx = cv2.approxPolyDP(uv_points, epsilon, True)
-                
+                base_eps = parameters['polygon_epsilon'] * normalized_arc_length
+                eps = max(base_eps, 1e-4)
+                # Adaptive simplification: avoid 4-corner collapse
+                approx = cv2.approxPolyDP(uv_points, eps, True)
+                tries = 0
+                while approx.shape[0] <= 6 and eps > 1e-6 and tries < 5:
+                    eps *= 0.5
+                    approx = cv2.approxPolyDP(uv_points, eps, True)
+                    tries += 1
                 # Convert the normalized points back to the original image size
                 approx_points = np.array([(int(point[0] * image_width), int(point[1] * image_height)) for point in approx.reshape(-1, 2)], dtype=np.int32)
                 approx_contours.append(approx_points)
@@ -84,7 +110,8 @@ def annotate(image: Union[Image.Image, np.ndarray], detection_results: List[Dete
                 
             ploygon_contours.extend(approx_contours)
             ploygon_contours_list.extend(approx_contours_list)
-            cv2.drawContours(image_cv2, approx_contours, -1, color.tolist(), 10)
+            if len(approx_contours) > 0:
+                cv2.drawContours(image_cv2, approx_contours, -1, color.tolist(), 10)
     
     #### draw composition lines
     print("Total polygons: ", len(ploygon_contours))

@@ -192,13 +192,36 @@ class ValueColor(QWidget):
 
         return pairs_layout
 
+    # def _make_feedback_label(self, prefix, text):
+    #     """
+    #     Creates self.{prefix}_feedback_label with consistent stylesheet
+    #     and returns it.
+    #     """
+    #     lbl = QLabel(text)
+    #     lbl.setAlignment(Qt.AlignLeft)
+    #     lbl.setWordWrap(True)
+    #     lbl.setStyleSheet("""
+    #         QLabel {
+    #             color: white;
+    #             background-color: #333333;
+    #             padding: 2px;
+    #             border-radius: 2px;
+    #             margin: 2px;
+    #         }
+    #     """)
+    #     setattr(self, f"{prefix}_feedback_label", lbl)
+    #     return lbl
+    
     def _make_feedback_label(self, prefix, text):
-        """
-        Creates self.{prefix}_feedback_label with consistent stylesheet
-        and returns it.
-        """
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(150)  
+        scroll.setMinimumHeight(80)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         lbl = QLabel(text)
-        lbl.setAlignment(Qt.AlignLeft)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lbl.setWordWrap(True)
         lbl.setStyleSheet("""
             QLabel {
@@ -209,14 +232,19 @@ class ValueColor(QWidget):
                 margin: 2px;
             }
         """)
+        
+        scroll.setWidget(lbl)
+        
         setattr(self, f"{prefix}_feedback_label", lbl)
-        return lbl
+        
+        return scroll
 
     # Individual tab-creators
     def create_value_tab(self):
         """Create the tab for value analysis"""
         self.value_tab = QWidget()
         layout = QVBoxLayout(self.value_tab)
+        layout.setAlignment(Qt.AlignTop)
 
         # canvas picker
         btn = QPushButton("Set Current Canvas")
@@ -270,6 +298,72 @@ class ValueColor(QWidget):
             "value", "Click 'Get Value Feedback' to analyze the canvas values"
         ))
 
+    # def create_color_tab(self):
+    #     """Create the tab for color analysis"""
+    #     self.color_tab = QWidget()
+    #     layout = QVBoxLayout(self.color_tab)
+    #     layout.setAlignment(Qt.AlignTop)
+    #     self.setWindowTitle("Color Cluster Matcher")
+
+    #     # Process & zoom controls
+    #     proc = QPushButton("Process Reference Image")
+    #     proc.clicked.connect(self.process_reference_image)
+    #     layout.addWidget(proc)
+
+    #     zoom_h = QHBoxLayout()
+    #     for txt, slot in (("- Zoom out", self.zoom_out),("+ Zoom in", self.zoom_in)):
+    #         btn = QPushButton(txt)
+    #         btn.clicked.connect(slot)
+    #         zoom_h.addWidget(btn)
+    #     layout.addLayout(zoom_h)
+
+    #      # Create color separation UI
+    #     self.scroll_area, self.image_label = self.color_separation_tool.create_color_separation_ui()
+    #     layout.addWidget(self.scroll_area)
+
+    #     # Color tools & fill options
+    #     tools = QGroupBox("Color Tools")
+    #     tv = QVBoxLayout(tools)
+
+    #     # # Create the color button and store it as an attribute
+    #     # self.colorButton = QPushButton("Select Color")
+    #     # self.colorButton.clicked.connect(self.selectColor)
+    #     # tv.addWidget(self.colorButton)
+        
+    #     # Create the lasso button and store it as an attribute
+    #     self.lassoButton = QPushButton("Lasso Fill Tool")
+    #     self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)  # Connect to lasso tool method
+    #     tv.addWidget(self.lassoButton)
+
+    #     # Get fill widgets from lasso fill tool and add them
+    #     self.fillGroup, self.fillColorButton, self.fillButton = self.lasso_fill_tool.create_fill_widgets()
+    #     tv.addWidget(self.fillGroup)
+
+    #     layout.addWidget(tools)
+
+    #     # --- SHARED SECTIONS ---
+    #     layout.addWidget(self._make_preview_section(
+    #         "color", "Canvas", "Reference"
+    #     ))
+    #     cfbtn = QPushButton("Get Color Feedback")
+    #     cfbtn.clicked.connect(self.get_feedback_color)
+    #     self.color_feedback_btn = cfbtn
+    #     layout.addWidget(cfbtn)
+
+    #     layout.addLayout(self._make_pairs_section(
+    #         "color", "Color Pairs (Canvas → Reference):"
+    #     ))
+
+    #     layout.addWidget(self._make_feedback_label(
+    #         "color", "Process reference image first"
+    #     ))
+
+    #     # Initialize image data storage
+    #     self.current_image = None
+    #     self.current_labels = None
+    #     self.current_colors = None
+    #     self.current_groups = None
+    
     def create_color_tab(self):
         """Create the tab for color analysis"""
         self.color_tab = QWidget()
@@ -289,22 +383,27 @@ class ValueColor(QWidget):
             zoom_h.addWidget(btn)
         layout.addLayout(zoom_h)
 
-         # Create color separation UI
-        self.scroll_area, self.image_label = self.color_separation_tool.create_color_separation_ui()
-        layout.addWidget(self.scroll_area)
+        # Button to pop out/dock color separation tool
+        self.color_sep_toggle_btn = QPushButton("↗ Pop Out Color Separation")
+        self.color_sep_toggle_btn.clicked.connect(self.toggle_color_separation_window)
+        layout.addWidget(self.color_sep_toggle_btn)
+
+        # Create color separation UI (initially embedded)
+        self.color_sep_container, self.image_label = self.color_separation_tool.create_color_separation_ui()
+        self.color_sep_parent_layout = layout  # Store reference to parent layout
+        layout.addWidget(self.color_sep_container)
+        
+        # Initialize floating window as None
+        self.color_sep_floating_window = None
+        self.color_sep_is_floating = False
 
         # Color tools & fill options
         tools = QGroupBox("Color Tools")
         tv = QVBoxLayout(tools)
-
-        # # Create the color button and store it as an attribute
-        # self.colorButton = QPushButton("Select Color")
-        # self.colorButton.clicked.connect(self.selectColor)
-        # tv.addWidget(self.colorButton)
         
         # Create the lasso button and store it as an attribute
         self.lassoButton = QPushButton("Lasso Fill Tool")
-        self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)  # Connect to lasso tool method
+        self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)
         tv.addWidget(self.lassoButton)
 
         # Get fill widgets from lasso fill tool and add them
@@ -335,7 +434,63 @@ class ValueColor(QWidget):
         self.current_labels = None
         self.current_colors = None
         self.current_groups = None
-             
+
+    def toggle_color_separation_window(self):
+        """Toggle the color separation tool between embedded and floating window"""
+        if self.color_sep_is_floating:
+            # Dock it back into the tab
+            self.dock_color_separation()
+        else:
+            # Pop it out into a floating window
+            self.pop_out_color_separation()
+
+    def pop_out_color_separation(self):
+        """Pop out the color separation tool into a floating window"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout
+        
+        # Create floating window
+        self.color_sep_floating_window = QDialog(self)
+        self.color_sep_floating_window.setWindowTitle("Color Separation Tool")
+        self.color_sep_floating_window.resize(800, 600)
+        
+        # Create layout for the dialog
+        dialog_layout = QVBoxLayout(self.color_sep_floating_window)
+        
+        # Remove container from parent and add to dialog
+        self.color_sep_container.setParent(None)
+        dialog_layout.addWidget(self.color_sep_container)
+        
+        # Update button text
+        self.color_sep_toggle_btn.setText("↙ Dock Color Separation")
+        self.color_sep_is_floating = True
+        
+        # Show the window
+        self.color_sep_floating_window.show()
+        
+        # Connect close event to dock back
+        self.color_sep_floating_window.finished.connect(self.on_floating_window_closed)
+
+    def dock_color_separation(self):
+        """Dock the color separation tool back into the color tab"""
+        # Remove from floating window
+        if self.color_sep_floating_window:
+            self.color_sep_container.setParent(None)
+            self.color_sep_floating_window.close()
+            self.color_sep_floating_window = None
+        
+        # Find the position to insert (after the toggle button)
+        toggle_index = self.color_sep_parent_layout.indexOf(self.color_sep_toggle_btn)
+        self.color_sep_parent_layout.insertWidget(toggle_index + 1, self.color_sep_container)
+        
+        # Update button text
+        self.color_sep_toggle_btn.setText("↗ Pop Out Color Separation")
+        self.color_sep_is_floating = False
+
+    def on_floating_window_closed(self):
+        """Handle when the floating window is closed by the user"""
+        if self.color_sep_is_floating:
+            self.dock_color_separation()
+                
     def process_reference_image(self):
         """Process the stored reference image for color analysis"""
         if hasattr(self, 'color_reference_image') and self.color_reference_image is not None:
