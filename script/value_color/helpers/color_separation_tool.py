@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
-from PyQt5.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import (QLabel, QScrollArea, QVBoxLayout, QWidget, 
+                             QHBoxLayout, QPushButton, QColorDialog, QSlider)
+from PyQt5.QtGui import QImage, QPixmap, QColor
 
 class ClusterHoverLabel(QLabel):
-    clusterHovered = pyqtSignal(int)  
+    clusterHovered = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -17,7 +18,12 @@ class ClusterHoverLabel(QLabel):
         self.cluster_groups = None
         self.current_pixmap = None
         self._pixmap_offset = QPoint(0, 0)  
-        self._pixmap_scale = 1.0  
+        self._pixmap_scale = 1.0
+        self.background_color = (255, 255, 255)  # Default white
+
+    def setBackgroundColor(self, color):
+        """Set the background color for highlighting (RGB tuple)"""
+        self.background_color = color
 
     def setImageData(self, original_img, labels, colors, groups):
         self.original_img = original_img
@@ -86,26 +92,34 @@ class ClusterHoverLabel(QLabel):
             # Convert mouse position to pixmap coordinates
             pos = event.pos()
 
+            # Get current pixmap dimensions
+            if not self.pixmap() or self.pixmap().isNull():
+                return
+
+            pixmap_width = self.pixmap().width()
+            pixmap_height = self.pixmap().height()
+
             # Check if mouse is within the pixmap area
-            if not (self._pixmap_offset.x() <= pos.x() < self._pixmap_offset.x() + self.pixmap().width() and
-                    self._pixmap_offset.y() <= pos.y() < self._pixmap_offset.y() + self.pixmap().height()):
+            if not (self._pixmap_offset.x() <= pos.x() < self._pixmap_offset.x() + pixmap_width and
+                    self._pixmap_offset.y() <= pos.y() < self._pixmap_offset.y() + pixmap_height):
                 self.leaveEvent(event)
                 return
 
             # Calculate position in original image coordinates
-            pixmap_pos = QPoint(
-                int((pos.x() - self._pixmap_offset.x()) / self._pixmap_scale),
-                int((pos.y() - self._pixmap_offset.y()) / self._pixmap_scale)
-            )
+            pixmap_x = pos.x() - self._pixmap_offset.x()
+            pixmap_y = pos.y() - self._pixmap_offset.y()
+            
+            orig_x = int(pixmap_x / self._pixmap_scale)
+            orig_y = int(pixmap_y / self._pixmap_scale)
 
             # Ensure position is within bounds
-            if (0 <= pixmap_pos.x() < self.cluster_labels.shape[1] and
-                0 <= pixmap_pos.y() < self.cluster_labels.shape[0]):
-                cluster_idx = self.cluster_labels[pixmap_pos.y(), pixmap_pos.x()]
+            if (0 <= orig_x < self.cluster_labels.shape[1] and
+                0 <= orig_y < self.cluster_labels.shape[0]):
+                cluster_idx = self.cluster_labels[orig_y, orig_x]
                 group_idx = self.cluster_groups[cluster_idx]
 
-                # Highlight all clusters in this group
-                highlighted = np.full_like(self.original_img, 255)  # White background
+                # Highlight all clusters in this group with custom background color
+                highlighted = np.full_like(self.original_img, self.background_color, dtype=np.uint8)
                 mask = np.isin(self.cluster_labels, [c for c, g in enumerate(self.cluster_groups) if g == group_idx])
                 highlighted[mask] = self.original_img[mask]
 
@@ -143,6 +157,11 @@ class ColorSeparationTool:
         self.current_colors = None
         self.current_groups = None
         self.image_label = None
+        self.background_color = QColor(255, 255, 255)  # Default white
+        self.bg_color_button = None
+        self.color_groups_slider = None
+        self.color_groups_label = None
+        self.num_color_groups = 15  # Default number of color groups
         
     def cleanup(self):
         """Clean up resources to prevent memory leaks"""
@@ -153,6 +172,27 @@ class ColorSeparationTool:
                 pass
             self.image_label = None
         
+        if self.bg_color_button:
+            try:
+                self.bg_color_button.deleteLater()
+            except:
+                pass
+            self.bg_color_button = None
+        
+        if self.color_groups_slider:
+            try:
+                self.color_groups_slider.deleteLater()
+            except:
+                pass
+            self.color_groups_slider = None
+        
+        if self.color_groups_label:
+            try:
+                self.color_groups_label.deleteLater()
+            except:
+                pass
+            self.color_groups_label = None
+        
         self.current_image = None
         self.current_labels = None
         self.current_colors = None
@@ -160,22 +200,92 @@ class ColorSeparationTool:
         
     def create_color_separation_ui(self):
         """Create the UI components for color separation"""
-        # scrollable image container
-        scroll_area = QScrollArea(self.parent.color_tab)
+        # Main container
+        main_container = QWidget(self.parent.color_tab)
+        main_layout = QVBoxLayout(main_container)
+        
+        # Color picker controls
+        controls_layout = QHBoxLayout()
+        
+        # Background color button
+        self.bg_color_button = QPushButton("Background Color")
+        self.bg_color_button.clicked.connect(self.choose_background_color)
+        self.update_color_button_style()
+        controls_layout.addWidget(self.bg_color_button)
+        
+        controls_layout.addStretch()
+        main_layout.addLayout(controls_layout)
+        
+        # Color groups slider
+        slider_layout = QHBoxLayout()
+        self.color_groups_label = QLabel(f"Color Groups: {self.num_color_groups}")
+        slider_layout.addWidget(self.color_groups_label)
+        
+        self.color_groups_slider = QSlider(Qt.Horizontal)
+        self.color_groups_slider.setMinimum(3)
+        self.color_groups_slider.setMaximum(30)
+        self.color_groups_slider.setValue(self.num_color_groups)
+        self.color_groups_slider.setTickPosition(QSlider.TicksBelow)
+        self.color_groups_slider.setTickInterval(3)
+        self.color_groups_slider.valueChanged.connect(self.on_slider_changed)
+        slider_layout.addWidget(self.color_groups_slider)
+        
+        main_layout.addLayout(slider_layout)
+        
+        # Scrollable image container
+        scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         img_cont = QWidget()
         v = QVBoxLayout(img_cont)
-        self.image_label = ClusterHoverLabel(img_cont)  # Store as attribute
-        self.image_label.setMinimumSize(200,200)
+        self.image_label = ClusterHoverLabel(img_cont)
+        self.image_label.setMinimumSize(200, 200)
         self.image_label.clusterHovered.connect(self.update_cluster_info)
         v.addWidget(self.image_label)
 
         scroll_area.setWidget(img_cont)
+        main_layout.addWidget(scroll_area)
         
-        return scroll_area, self.image_label
+        return main_container, self.image_label
+    
+    def on_slider_changed(self, value):
+        """Handle slider value change"""
+        self.num_color_groups = value
+        if self.color_groups_label:
+            self.color_groups_label.setText(f"Color Groups: {value}")
+        
+        # Reprocess the image with new number of color groups
+        self.update_cluster_count()
+    
+    def choose_background_color(self):
+        """Open color picker dialog to choose background color"""
+        color = QColorDialog.getColor(self.background_color, self.parent, "Choose Background Color")
+        
+        if color.isValid():
+            self.background_color = color
+            self.update_color_button_style()
+            
+            # Update the image label's background color
+            if self.image_label:
+                self.image_label.setBackgroundColor((color.red(), color.green(), color.blue()))
+    
+    def update_color_button_style(self):
+        """Update the button style to show the current background color"""
+        if self.bg_color_button:
+            r, g, b = self.background_color.red(), self.background_color.green(), self.background_color.blue()
+            # Calculate contrast color for text (black or white)
+            brightness = (r * 299 + g * 587 + b * 114) / 1000
+            text_color = "black" if brightness > 128 else "white"
+            
+            self.bg_color_button.setStyleSheet(
+                f"background-color: rgb({r}, {g}, {b}); "
+                f"color: {text_color}; "
+                f"border: 1px solid #888; "
+                f"padding: 5px 10px; "
+                f"border-radius: 3px;"
+            )
         
     def process_reference_image(self, color_reference_image):
         """Process the stored reference image for color analysis"""
@@ -201,7 +311,7 @@ class ColorSeparationTool:
 
         self.parent.color_data.reference_dominant = self.parent.color_data.extract_dominant(
             self.current_image,
-            num_values=15
+            num_values=self.num_color_groups
         )
         dominant_colors = self.parent.color_data.reference_dominant
 

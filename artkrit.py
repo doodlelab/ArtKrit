@@ -1,4 +1,4 @@
-from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita
+from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita, InfoObject
 from PyQt5.QtCore import Qt, QPointF, QMimeData, QEventLoop, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QLineEdit, QHBoxLayout, QSlider, QSpinBox, QSizePolicy,
@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPainterPath, QGuiApplication, QClipboard
 from ArtKrit.script.value_color.value_color import ValueColor
+import json
+from datetime import datetime
 
 import os
 import sys
@@ -184,7 +186,7 @@ class ArtKrit(DockWidget):
         self.show_contours_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)  # Prevent vertical stretching
         self.show_contours_btn.clicked.connect(self.toggle_contours)
         self.composition_layout.addWidget(self.show_contours_btn)
-    
+
 
     def draw_grid(self):
         document = Krita.instance().activeDocument()
@@ -318,6 +320,7 @@ class ArtKrit(DockWidget):
             ## Draw lines in krita
             self.compose_lines = response_json['composition_lines']
             self.draw_composition_lines()
+            self.value_color.append_log_entry("generate adaptive grid", f'Generating adaptive grid with prompt: {self.text_prompt_input.text()} and polygon epsilon: {self.polygon_epsilon_slider.value()} and number of lines: {self.grid_lines_slider.value()}')
         
         
     def draw_composition_lines(self):        
@@ -352,7 +355,7 @@ class ArtKrit(DockWidget):
         
         compose_layer.addShapesFromSvg(svg_content)
         compose_layer.setVisible(True)
-        
+
         # Refresh the document
         document.refreshProjection()
         
@@ -431,6 +434,7 @@ class ArtKrit(DockWidget):
         
         temp_path, half_size_path = self.write_layer_to_temp(reference_layer)
         self.value_color.upload_image(half_size_path)
+        self.value_color.append_log_entry("set ref img composition", "Setting reference image for composition")
     
     
     def write_layer_to_temp(self, layer):
@@ -527,7 +531,7 @@ class ArtKrit(DockWidget):
 
             # Draw the lines
             painter = QPainter(image)
-            pen = QPen(QColor(0, 255, 0))  # Red color for lines
+            pen = QPen(QColor(0, 255, 0))  # Green color for lines
             pen.setWidth(15)
             painter.setPen(pen)
 
@@ -621,7 +625,7 @@ class ArtKrit(DockWidget):
 
             # Draw the circle
             painter = QPainter(image)
-            pen = QPen(QColor(0, 255, 0))  # Blue color for circle
+            pen = QPen(QColor(0, 255, 0))  # Green color for circle
             pen.setWidth(15)
             painter.setPen(pen)
 
@@ -653,11 +657,13 @@ class ArtKrit(DockWidget):
             third_layer = document.nodeByName('Rule of Thirds Grid')
             if not third_layer:
                 self.create_thirds_layer()
+                self.value_color.append_log_entry("toggle rule of thirds grid", "Toggling rule of thirds grid")
             else:
                 # Toggle visibility of the existing layer
                 current_visibility = third_layer.visible()
                 third_layer.setVisible(not current_visibility)
                 document.refreshProjection()
+                self.value_color.append_log_entry("toggle rule of thirds grid", "Toggling rule of thirds grid")
 
     def toggle_canvas_cross(self):
         document = Krita.instance().activeDocument()
@@ -665,11 +671,13 @@ class ArtKrit(DockWidget):
             cross_layer = document.nodeByName('Cross Grid')
             if not cross_layer:
                 self.create_cross_layer()
+                self.value_color.append_log_entry("toggle cross grid", "Toggling cross grid")
             else:
                 # Toggle visibility of the existing layer
                 current_visibility = cross_layer.visible()
                 cross_layer.setVisible(not current_visibility)
                 document.refreshProjection()
+                self.value_color.append_log_entry("toggle cross grid","Toggling cross grid")
 
     def toggle_canvas_circle(self):
         document = Krita.instance().activeDocument()
@@ -677,11 +685,13 @@ class ArtKrit(DockWidget):
             circle_layer = document.nodeByName('Circle Grid')
             if not circle_layer:
                 self.create_circle_layer()
+                self.value_color.append_log_entry("toggle circle grid", "Toggling circle grid")
             else:
                 # Toggle visibility of the existing layer
                 current_visibility = circle_layer.visible()
                 circle_layer.setVisible(not current_visibility)
                 document.refreshProjection()
+                self.value_color.append_log_entry("toggle circle grid","Toggling circle grid")
 
     def toggle_adaptive_grid(self):
         document = Krita.instance().activeDocument()
@@ -692,6 +702,7 @@ class ArtKrit(DockWidget):
                 current_visibility = adaptive_grid_layer.visible()
                 adaptive_grid_layer.setVisible(not current_visibility)
                 document.refreshProjection()
+                self.value_color.append_log_entry("toggle adaptive grid", "Toggling adaptive grid")
             else:
                 print("Adaptive grid layer not found")
 
@@ -703,6 +714,7 @@ class ArtKrit(DockWidget):
                 current_visibility = contours_layer.visible()
                 contours_layer.setVisible(not current_visibility)
                 document.refreshProjection()
+                self.value_color.append_log_entry("contours feedback", "Toggling contours visibility")
             else:
                 print("Contours layer not found")
 
@@ -716,6 +728,7 @@ class ArtKrit(DockWidget):
         loop = QEventLoop()
         QTimer.singleShot(value, loop.quit)
         loop.exec()
+
 
 # Register the docker with Krita
 Krita.instance().addDockWidgetFactory(
