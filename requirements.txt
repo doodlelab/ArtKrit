@@ -8,3 +8,4 @@ PyQt5==5.15.11
 Requests==2.32.3
 scikit_learn==1.6.1
 transformers==4.49.0
+replicate
