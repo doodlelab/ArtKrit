@@ -874,3 +874,137 @@ def line_leftmost_to_rightmost(line):
     leftmost_y = slope * leftmost_x + intercept
     rightmost_y = slope * rightmost_x + intercept
     return (leftmost_x, leftmost_y), (rightmost_x, rightmost_y)
+
+def process_image_direct(image, detections, polygon_epsilon):
+    """
+    Direct processing without server - ANNOTATION ONLY.
+    Detection and segmentation should be done by the caller.
+    
+    Args:
+        image: PIL Image object
+        detections: List of DetectionResult objects (already detected and segmented)
+        polygon_epsilon: Epsilon for polygon approximation
+    
+    Returns:
+        Dictionary with polygon_contours, composition_lines, and points
+    """
+    import cv2
+    import time
+    
+    t0 = time.time()
+    
+    # Annotate
+    image_array = np.array(image)
+    
+    visualization_parameters = {
+        "polygon_epsilon": polygon_epsilon * 1e-3,
+        "point_radius": 1e-2,
+        "line_fit_tol": 0.04,
+        "line_radius": 1e-1
+    }
+    
+    annotated_image, polygon_contours_list, lines_list, points_to_draw = annotate(
+        image_array, detections, visualization_parameters
+    )
+    t_annotate = time.time()
+    
+    # Save annotated image
+    cv2.imwrite("temp/krita_temp_detection_res.png", img=annotated_image)
+    
+    # Timing summary
+    try:
+        print(f"[Timing] annotate={t_annotate - t0:.2f}s total={t_annotate - t0:.2f}s")
+    except Exception as e:
+        print(f"[Timing] error computing timings: {e}")
+    
+    result = {
+        "ploygon_contours": polygon_contours_list,
+        "composition_lines": lines_list,
+        "points": points_to_draw
+    }
+    
+    return result
+
+def regenerate_lines_direct(points, polygon_contours):
+    """
+    Regenerate composition lines from manually adjusted points
+    without calling the detection models again.
+    
+    Args:
+        points: List of [x, y] coordinates
+        polygon_contours: List of polygon contours (each is a list of [x, y] coordinates)
+    
+    Returns:
+        List of composition lines [[[x1, y1], [x2, y2]], ...]
+    """
+    import time
+    
+    if not points:
+        raise ValueError('Points are required')
+    
+    if not polygon_contours:
+        raise ValueError('Polygon contours are required')
+    
+    print(f"[Direct] Regenerating lines from {len(points)} manually adjusted points")
+    t0 = time.time()
+    
+    # Assign points to polygons
+    points_with_index = assign_points_to_polygons(points, polygon_contours)
+    
+    # Create a dummy image array for shape information
+    max_x = max(max(p[0] for p in contour) for contour in polygon_contours)
+    max_y = max(max(p[1] for p in contour) for contour in polygon_contours)
+    image_shape = (int(max_y) + 1, int(max_x) + 1, 3)
+    dummy_image = np.zeros(image_shape, dtype=np.uint8)
+    
+    # Use the line fitting logic
+    line_fit_tol = 0.04
+    inlier_threshold = 0.05
+    lines = fit_lines(points_with_index, dummy_image, line_fit_tol=line_fit_tol, inlier_threshold=inlier_threshold)
+    
+    t_generate = time.time()
+    print(f"[Direct] Generated {len(lines)} composition lines in {t_generate - t0:.2f}s")
+    
+    # Convert lines to the same format as process_image
+    lines_list = []
+    for line in lines:
+        p1, p2 = line_leftmost_to_rightmost(line)
+        lines_list.append([[int(p1[0]), int(p1[1])], [int(p2[0]), int(p2[1])]])
+    
+    return lines_list
+
+
+def assign_points_to_polygons(points, polygon_contours):
+    """
+    Assign each point to the polygon it's closest to.
+    
+    Args:
+        points: List of [x, y] coordinates
+        polygon_contours: List of polygon contours (each is a list of [x, y] coordinates)
+    
+    Returns:
+        List of tuples: [(point, polygon_index), ...]
+    """
+    points_with_index = []
+    
+    for point in points:
+        point_array = np.array(point, dtype=np.float32)
+        min_distance = float('inf')
+        closest_polygon_idx = 0
+        
+        # Find the closest polygon to this point
+        for poly_idx, contour in enumerate(polygon_contours):
+            contour_array = np.array(contour, dtype=np.float32).reshape(-1, 2)
+            
+            # Calculate distance to each point in the contour
+            distances = np.linalg.norm(contour_array - point_array, axis=1)
+            min_dist_to_contour = np.min(distances)
+            
+            if min_dist_to_contour < min_distance:
+                min_distance = min_dist_to_contour
+                closest_polygon_idx = poly_idx
+        
+        points_with_index.append((point, closest_polygon_idx))
+    
+    print(f"[Direct] Assigned {len(points)} points to {len(polygon_contours)} polygons")
+    return points_with_index

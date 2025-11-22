@@ -9,7 +9,7 @@ from PIL import Image
 import torch
 import replicate
 
-from composition_utils import *
+from .composition_utils import *
 
 try:
     from replicate.helpers import FileOutput as ReplicateFileOutput

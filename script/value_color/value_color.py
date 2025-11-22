@@ -389,9 +389,9 @@ class ValueColor(QWidget):
         tv = QVBoxLayout(tools)
 
         # Create the color button
-        self.colorButton = QPushButton("Select Color")
-        self.colorButton.clicked.connect(self.selectColor)
-        tv.addWidget(self.colorButton)
+        # self.colorButton = QPushButton("Select Color")
+        # self.colorButton.clicked.connect(self.selectColor)
+        # tv.addWidget(self.colorButton)
         
         # Create the lasso button and store it as an attribute
         self.lassoButton = QPushButton("Lasso Fill Tool")
