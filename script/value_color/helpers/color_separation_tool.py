@@ -161,7 +161,7 @@ class ColorSeparationTool:
         self.bg_color_button = None
         self.color_groups_slider = None
         self.color_groups_label = None
-        self.num_color_groups = 15  # Default number of color groups
+        self.num_color_groups = 8  # Default number of color groups
         
     def cleanup(self):
         """Clean up resources to prevent memory leaks"""
