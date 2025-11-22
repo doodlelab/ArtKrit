@@ -39,7 +39,6 @@ class DetectionResult:
                                    ymax=detection_dict['box']['ymax']))
 
 
-## visualization functions
 def annotate(image: Union[Image.Image, np.ndarray], detection_results: List[DetectionResult], parameters: Dict) -> np.ndarray:
     # Convert PIL Image to OpenCV format
     image_cv2 = np.array(image) if isinstance(image, Image.Image) else image
@@ -122,6 +121,8 @@ def annotate(image: Union[Image.Image, np.ndarray], detection_results: List[Dete
     ## Find global shortest edge length across all polygons
     shortest_edge = float('inf')
     polygon_areas = []
+    valid_edges = []  # Track all valid edge lengths
+    
     for contour in ploygon_contours:
         polygon_areas.append(cv2.contourArea(contour))
         points = contour.reshape(-1, 2)
@@ -129,7 +130,17 @@ def annotate(image: Union[Image.Image, np.ndarray], detection_results: List[Dete
             p1 = points[i]
             p2 = points[(i + 1) % len(points)]
             edge_length = np.linalg.norm(p2 - p1)
-            shortest_edge = min(shortest_edge, edge_length)
+            if edge_length > 0:  # Only consider valid edges
+                valid_edges.append(edge_length)
+                shortest_edge = min(shortest_edge, edge_length)
+    
+    # FIX: If no valid edges found, use a default based on image size
+    if not valid_edges or np.isinf(shortest_edge):
+        image_height, image_width = image_cv2.shape[:2]
+        shortest_edge = min(image_width, image_height) * 0.01  # 1% of smallest dimension
+        print(f"[Warning] No valid edges found, using default shortest_edge: {shortest_edge:.2f}")
+    else:
+        print(f"[Info] Found shortest_edge: {shortest_edge:.2f} from {len(valid_edges)} valid edges")
             
     for i, contour in enumerate(ploygon_contours):
         # Sample points from the contour edges
@@ -510,19 +521,26 @@ def get_slope_and_intercept(pointA, pointB):
     intercept = pointB[1] - slope * pointB[0]
     return slope, intercept
 
-
 def sample_contour_points(contour, shortest_edge=1):
     """
     Sample points from a contour's edges with density proportional to edge length.
     
     Args:
         contour: OpenCV contour (numpy array of points)
-        min_points_per_edge: Minimum number of points to sample per edge
-        points_per_unit_length: Number of points to sample per unit length of edge
+        shortest_edge: Reference edge length for sampling density
         
     Returns:
         List of sampled points [[x1,y1], [x2,y2], ...]
     """
+    # Safety check: validate inputs
+    if len(contour) < 2:
+        print(f"[Warning] Contour has only {len(contour)} points, returning as-is")
+        return contour.reshape(-1, 2).tolist()
+    
+    if shortest_edge <= 0 or np.isinf(shortest_edge) or np.isnan(shortest_edge):
+        print(f"[Warning] Invalid shortest_edge value: {shortest_edge}, using default")
+        shortest_edge = 10.0  # Fallback default
+    
     points = contour.reshape(-1, 2)
     sampled_points = []
     
@@ -535,10 +553,16 @@ def sample_contour_points(contour, shortest_edge=1):
         # Calculate edge length
         edge_length = np.linalg.norm(p2 - p1)
         
+        # Skip zero-length edges
+        if edge_length < 1e-6:
+            continue
+        
         # Calculate number of points to sample for this edge
-        # Ensure at least min_points_per_edge points
-        #find the shortest edge and use it as the unit length
         num_points = max(2, int(edge_length // (shortest_edge * 2)))
+        
+        # Additional safety check
+        if num_points > 10000:  # Prevent excessive sampling
+            num_points = 10000
         
         # Sample points along the edge
         t = np.linspace(0, 1, num_points)
@@ -548,8 +572,12 @@ def sample_contour_points(contour, shortest_edge=1):
             y = p1[1] + t_val * (p2[1] - p1[1])
             sampled_points.append([x, y])
     
+    # If no points were sampled, return the original contour points
+    if len(sampled_points) == 0:
+        print("[Warning] No points sampled, returning original contour")
+        return points.tolist()
+    
     return sampled_points
-
 
 # a simple algorithm to find the hash of slope and intercept
 def get_unique_id(slope, intercept):
