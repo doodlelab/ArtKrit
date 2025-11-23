@@ -13,7 +13,7 @@ from ArtKrit.script.composition.composition_utils import process_image_direct, r
 
 import os
 import sys
-sys.path.append(os.path.expanduser("~/ddraw/lib/python3.10/site-packages"))
+sys.path.append(os.path.expanduser("~/ddraw/lib/site-packages"))
 
 class PreviewDialog(QDialog):
     """Popup dialog for showing the reference image with overlays"""

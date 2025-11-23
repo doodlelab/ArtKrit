@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPainterPath, QConicalGradient, QBrush
 import os
 import sys
-sys.path.append(os.path.expanduser("~/ddraw/lib/python3.10/site-packages"))
+sys.path.append(os.path.expanduser("~/ddraw/lib/site-packages"))
 import cv2
 import numpy as np
 from PIL import Image
