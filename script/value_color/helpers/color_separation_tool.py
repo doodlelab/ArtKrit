@@ -161,7 +161,7 @@ class ColorSeparationTool:
         self.bg_color_button = None
         self.color_groups_slider = None
         self.color_groups_label = None
-        self.num_color_groups = 8  # Default number of color groups
+        self.num_color_groups = 5  # Default number of color groups
         
     def cleanup(self):
         """Clean up resources to prevent memory leaks"""
@@ -223,7 +223,7 @@ class ColorSeparationTool:
         
         self.color_groups_slider = QSlider(Qt.Horizontal)
         self.color_groups_slider.setMinimum(3)
-        self.color_groups_slider.setMaximum(30)
+        self.color_groups_slider.setMaximum(15)
         self.color_groups_slider.setValue(self.num_color_groups)
         self.color_groups_slider.setTickPosition(QSlider.TicksBelow)
         self.color_groups_slider.setTickInterval(3)
