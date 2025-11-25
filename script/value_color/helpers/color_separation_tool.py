@@ -1,9 +1,16 @@
+from krita import Krita, InfoObject
 import cv2
 import numpy as np
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
 from PyQt5.QtWidgets import (QLabel, QScrollArea, QVBoxLayout, QWidget, 
                              QHBoxLayout, QPushButton, QColorDialog, QSlider)
 from PyQt5.QtGui import QImage, QPixmap, QColor
+import os
+import sys
+from PIL import Image
+import json
+from datetime import datetime
+
 
 class ClusterHoverLabel(QLabel):
     clusterHovered = pyqtSignal(int)
@@ -20,6 +27,7 @@ class ClusterHoverLabel(QLabel):
         self._pixmap_offset = QPoint(0, 0)  
         self._pixmap_scale = 1.0
         self.background_color = (255, 255, 255)  # Default white
+
 
     def setBackgroundColor(self, color):
         """Set the background color for highlighting (RGB tuple)"""
@@ -161,7 +169,66 @@ class ColorSeparationTool:
         self.bg_color_button = None
         self.color_groups_slider = None
         self.color_groups_label = None
-        self.num_color_groups = 8  # Default number of color groups
+        self.num_color_groups = 5  # Default number of color groups
+
+    def get_json_path(self):
+        """Get the path to the logs JSON file"""
+        home_dir = os.path.expanduser("~")
+        logs_folder = os.path.join(home_dir, "ArtKrit_logs")  
+        os.makedirs(logs_folder, exist_ok=True)
+        return os.path.join(logs_folder, "logs.json")
+    
+    def append_log_entry(self, action, message):
+        """Append a log entry to the JSON log file"""
+        self.save_png_on_button_press(action)
+        json_path = self.get_json_path()
+
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {"logs": []}
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        data["logs"].append({
+            "timestamp": timestamp,
+            "action": action,
+            "message": message
+        })
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+        print(f"Logged: {action}")
+
+
+    def save_png_on_button_press(self, action):
+        """Save the current document as PNG when a button is pressed"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        base_folder = os.path.join(home_dir, "ArtKrit_logs")
+        images_folder = os.path.join(base_folder, "canvas_images")
+        os.makedirs(images_folder, exist_ok=True)
+
+        doc = Krita.instance().activeDocument()
+        if doc is not None:
+            current_path = doc.fileName()
+            if not current_path:
+                print("Please save your document first.")
+                return
+            
+            png_path = os.path.join(images_folder, f"{timestamp}_{safe_action}.png")
+            
+            doc.setBatchmode(True)
+            options = InfoObject()
+            options.setProperty('compression', 5)
+            options.setProperty('alpha', True)
+            doc.exportImage(png_path, options)
+            doc.setBatchmode(False)
+
         
     def cleanup(self):
         """Clean up resources to prevent memory leaks"""
@@ -223,7 +290,7 @@ class ColorSeparationTool:
         
         self.color_groups_slider = QSlider(Qt.Horizontal)
         self.color_groups_slider.setMinimum(3)
-        self.color_groups_slider.setMaximum(30)
+        self.color_groups_slider.setMaximum(15)
         self.color_groups_slider.setValue(self.num_color_groups)
         self.color_groups_slider.setTickPosition(QSlider.TicksBelow)
         self.color_groups_slider.setTickInterval(3)
@@ -258,6 +325,7 @@ class ColorSeparationTool:
         
         # Reprocess the image with new number of color groups
         self.update_cluster_count()
+        self.append_log_entry("Color Groups Changed", f"New number of color groups: {value}")
     
     def choose_background_color(self):
         """Open color picker dialog to choose background color"""
@@ -270,7 +338,9 @@ class ColorSeparationTool:
             # Update the image label's background color
             if self.image_label:
                 self.image_label.setBackgroundColor((color.red(), color.green(), color.blue()))
-    
+                self.append_log_entry("Background Color Changed", f"New color: {color.name()}")
+                
+
     def update_color_button_style(self):
         """Update the button style to show the current background color"""
         if self.bg_color_button:

@@ -127,6 +127,20 @@ class ValueColor(QWidget):
     def __del__(self):
         self.cleanup()
 
+    def export_pixmap(self, pixmap, action):
+        """Export a QPixmap as PNG to the logs directory"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        export_folder = os.path.join(home_dir, "ArtKrit_logs", "artkrit_output_images")
+        os.makedirs(export_folder, exist_ok=True)
+
+        filename = os.path.join(export_folder, f"{timestamp}_{safe_action}.png")
+        pixmap.save(filename, "PNG")
+        print(f"Saved filtered image as {filename}")
+
+
     def export_filtered_image_as_png(self, filtered_image, action):
         """Export a filtered image as PNG to the logs directory"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -197,6 +211,7 @@ class ValueColor(QWidget):
             json.dump(data, f, indent=4)
 
         print(f"Logged: {action}")
+
 
     def _make_preview_section(self, prefix, left_text, right_text):
         """
@@ -429,10 +444,13 @@ class ValueColor(QWidget):
 
     def toggle_color_separation_window(self):
         """Toggle the color separation tool between embedded and floating window"""
+         # Toggle state
         if self.color_sep_is_floating:
             self.dock_color_separation()
+            self.append_log_entry("toggle color separation window close", "Toggled color separation tool window state: docked")
         else:
             self.pop_out_color_separation()
+            self.append_log_entry("toggle color separation window open", "Toggled color separation tool window state: popped out")
 
     def pop_out_color_separation(self):
         """Pop out the color separation tool into a floating window"""
@@ -478,6 +496,7 @@ class ValueColor(QWidget):
         """Handle when the floating window is closed by the user"""
         if self.color_sep_is_floating:
             self.dock_color_separation()
+            self.append_log_entry("toggle color separation window close", "Toggled color separation tool window state: docked")
                 
     def process_reference_image(self):
         """Process the stored reference image for color analysis"""
@@ -629,8 +648,12 @@ class ValueColor(QWidget):
             self.filtered_canvas = np.zeros_like(self.filtered_image)
         
         self.display_split_view(self.filtered_canvas, self.filtered_image, False)
-        self.export_filtered_image_as_png(self.filtered_image, f"applied_{self.current_filter}_filter_image")
-        self.export_filtered_image_as_png(self.filtered_canvas, f"applied_{self.current_filter}_filter_canvas")
+        self.export_filtered_image_as_png(self.filtered_image, f"applied_{self.current_filter}_filter_image, with {kernel_size} kernel")
+        self.export_filtered_image_as_png(self.filtered_canvas, f"applied_{self.current_filter}_filter_canvas, with {kernel_size} kernel")
+        self.append_log_entry("Update value preview reference", f"Applied {self.current_filter} filter with kernel size {kernel_size} to reference")
+        self.append_log_entry("Update value preview canvas", f"Applied {self.current_filter} filter with kernel size {kernel_size} to canvas")
+
+
 
     def get_feedback_value(self):
         """Extract dominant values from the canvas and compare with the reference."""
@@ -1235,8 +1258,8 @@ class ValueColor(QWidget):
             self.selectionTimer.start(500)
             
             QTimer.singleShot(500, lambda: self.lassoButton.setStyleSheet(""))
-            self.append_log_entry("lasso tool", "Lasso tool activated")
-    
+           
+
     def selectFillColor(self):
         """Open the HS picker seeded by the current selection's average value."""
         # Extract the dominant value from the selection
@@ -1254,7 +1277,7 @@ class ValueColor(QWidget):
                     if selectedColor.isValid():
                         self.currentFillColor = selectedColor
                         self.fillColorButton.setStyleSheet(f"background-color: {selectedColor.name()};")
-                        self.append_log_entry("lasso fill color", f"Selected lasso fill color: {selectedColor.name()}")
+                       
 
     def fillSelection(self):
         """Fill the current selection with the selected fill color."""
@@ -1297,7 +1320,7 @@ class ValueColor(QWidget):
                 fillToolAction.trigger()
                 
                 QTimer.singleShot(100, lambda: self.triggerFillForeground(krita_instance))
-                self.append_log_entry("lasso fill complete", f"Filled lasso selection with color: {new_color.name()}")
+                
             else:
                 print("Could not find fill tool action")
 

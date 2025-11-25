@@ -436,6 +436,7 @@ class ArtKrit(DockWidget):
                                    int(p2[0] * scale_x), int(p2[1] * scale_y))
         
         painter.end()
+        self.value_color.export_pixmap(result, "overlayed composition preview")
         return result
 
 
@@ -465,10 +466,12 @@ class ArtKrit(DockWidget):
             self.preview_dialog = PreviewDialog(self, self.preview_image)
             self.preview_dialog.show()
             self.popout_btn.setText("Close Pop Out")
+            self.value_color.append_log_entry("preview popup open", "Opened preview popup dialog")
         else:
             self.preview_dialog.close()
             self.preview_dialog = None
             self.popout_btn.setText("Pop Out Preview")
+            self.value_color.append_log_entry("preview popup close", "Closed preview popup dialog")
 
 
     def read_points_from_layer(self):
@@ -703,6 +706,8 @@ class ArtKrit(DockWidget):
 
         # Refresh the document
         document.refreshProjection()
+        self.value_color.append_log_entry("draw composition lines", 
+            f"Drew {num_lines_to_draw} composition lines on canvas when asked for {self.grid_lines_slider.value()} lines")
         
     
     def set_reference_image(self):
