@@ -1,8 +1,14 @@
-from krita import Krita, ManagedColor
+from krita import Krita, ManagedColor, InfoObject
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QGroupBox, QVBoxLayout, QPushButton
 from PyQt5.QtGui import QColor
 import numpy as np
+import os
+import sys
+from PIL import Image
+import json
+from datetime import datetime
+
 
 class LassoFillTool:
     def __init__(self, parent):
@@ -11,6 +17,64 @@ class LassoFillTool:
         self.selectionTimer = QTimer()
         self.selectionTimer.setSingleShot(True)
         self.selectionTimer.timeout.connect(self.checkSelection)
+    
+
+    def get_json_path(self):
+        """Get the path to the logs JSON file"""
+        home_dir = os.path.expanduser("~")
+        logs_folder = os.path.join(home_dir, "ArtKrit_logs")  
+        os.makedirs(logs_folder, exist_ok=True)
+        return os.path.join(logs_folder, "logs.json")
+    
+    def append_log_entry(self, action, message):
+        """Append a log entry to the JSON log file"""
+        self.save_png_on_button_press(action)
+        json_path = self.get_json_path()
+
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {"logs": []}
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        data["logs"].append({
+            "timestamp": timestamp,
+            "action": action,
+            "message": message
+        })
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+        print(f"Logged: {action}")
+
+    def save_png_on_button_press(self, action):
+        """Save the current document as PNG when a button is pressed"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        base_folder = os.path.join(home_dir, "ArtKrit_logs")
+        images_folder = os.path.join(base_folder, "canvas_images")
+        os.makedirs(images_folder, exist_ok=True)
+
+        doc = Krita.instance().activeDocument()
+        if doc is not None:
+            current_path = doc.fileName()
+            if not current_path:
+                print("Please save your document first.")
+                return
+            
+            png_path = os.path.join(images_folder, f"{timestamp}_{safe_action}.png")
+            
+            doc.setBatchmode(True)
+            options = InfoObject()
+            options.setProperty('compression', 5)
+            options.setProperty('alpha', True)
+            doc.exportImage(png_path, options)
+            doc.setBatchmode(False)
         
     # In lasso_fill_tool.py
     def create_fill_widgets(self):
@@ -49,6 +113,7 @@ class LassoFillTool:
             self.selectionTimer.start(500)
             
             QTimer.singleShot(500, lambda: self.parent.lassoButton.setStyleSheet(""))
+            self.append_log_entry("lasso tool", "Lasso tool activated")
     
     def selectFillColor(self):
         """Open the HS picker seeded by the current selection's average value."""
@@ -84,6 +149,8 @@ class LassoFillTool:
                     if selectedColor.isValid():
                         self.currentFillColor = selectedColor
                         self.fillColorButton.setStyleSheet(f"background-color: {selectedColor.name()};")
+                        self.append_log_entry("lasso fill color", f"Selected lasso fill color: {selectedColor.name()}")
+
         
     def fillSelection(self):
         """Fill the current selection with the selected fill color."""
@@ -126,14 +193,19 @@ class LassoFillTool:
                 fillToolAction.trigger()
                 
                 QTimer.singleShot(100, lambda: self.triggerFillForeground(krita_instance))
+                self.append_log_entry("lasso fill initiated", f"Initiated lasso fill with color: {new_color.name()}")
+                
             else:
                 print("Could not find fill tool action")
+
+                
 
     def triggerFillForeground(self, krita_instance):
         """Triggers the fill_foreground action after the fill tool is activated."""
         fillAction = krita_instance.action('fill_foreground')
         if fillAction:
             fillAction.trigger()
+            
 
     def extractAverageValueFromSelection(self, node, selection):
         """
@@ -219,3 +291,7 @@ class LassoFillTool:
                 
         if self.parent.fillGroup.isVisible():
             self.selectionTimer.start(500)
+       
+        
+        
+            
