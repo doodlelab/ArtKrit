@@ -115,6 +115,37 @@ class LassoFillTool:
             QTimer.singleShot(500, lambda: self.parent.lassoButton.setStyleSheet(""))
             self.append_log_entry("lasso tool", "Lasso tool activated")
     
+    def deactivateLassoTool(self):
+        """Deactivate the lasso tool, clear selection, and hide the fill group."""
+        krita_instance = Krita.instance()
+        doc = krita_instance.activeDocument()
+        
+        # Clear any active selection
+        if doc and doc.selection():
+            doc.setSelection(None)
+            doc.refreshProjection()
+        
+        # Stop the selection timer
+        self.selectionTimer.stop()
+        
+        # Hide the fill group
+        self.parent.fillGroup.setVisible(False)
+        
+        # Reset state
+        self.isActive = False
+        self.fillButton.setEnabled(False)
+        
+        # Reset button style
+        self.parent.lassoButton.setStyleSheet("")
+        
+        # Switch back to a default tool (e.g., freehand brush)
+        defaultToolAction = krita_instance.action('KritaShape/KisToolBrush')
+        if defaultToolAction:
+            defaultToolAction.trigger()
+        
+        self.append_log_entry("lasso tool fill complete", "Lasso tool fill complete")
+        print("Lasso tool deactivated")
+    
     def selectFillColor(self):
         """Open the HS picker seeded by the current selection's average value."""
         # Extract the dominant value from the selection
