@@ -18,7 +18,7 @@ class LassoFillTool:
         self.selectionTimer.setSingleShot(True)
         self.selectionTimer.timeout.connect(self.checkSelection)
         self.isActive = False
-
+        
     def get_json_path(self):
         """Get the path to the logs JSON file"""
         home_dir = os.path.expanduser("~")
@@ -149,6 +149,7 @@ class LassoFillTool:
         if defaultToolAction:
             defaultToolAction.trigger()
         
+        self.append_log_entry("lasso tool fill complete", "Lasso tool fill complete")
         print("Lasso tool deactivated")
     
     def selectFillColor(self):

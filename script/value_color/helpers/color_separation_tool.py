@@ -170,7 +170,6 @@ class ColorSeparationTool:
         self.color_groups_slider = None
         self.color_groups_label = None
         self.num_color_groups = 5  # Default number of color groups
-    
 
     def get_json_path(self):
         """Get the path to the logs JSON file"""
