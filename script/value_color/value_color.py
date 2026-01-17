@@ -819,10 +819,7 @@ class ValueColor(QWidget):
             #  region masks
             cur_color = colors[i % len(colors)]
             canvas_mask = self.get_region_mask(canvas_for_mask, canvas_hex, is_color_analysis)
-            if (is_color_analysis):
-                ref_mask = self.get_region_mask(ref_for_mask, ref_hex, is_color_analysis)
-            else:
-                ref_mask = self.get_region_mask(self.filtered_image, ref_hex, is_color_analysis)
+            ref_mask = self.get_region_mask(ref_for_mask, ref_hex, is_color_analysis)
 
             #  Contours for both masks
             canvas_contours, _ = cv2.findContours(canvas_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
