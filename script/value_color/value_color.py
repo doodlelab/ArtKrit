@@ -693,29 +693,32 @@ class ValueColor(QWidget):
         self.value_canvas_image = pixel_array_gray
 
         self.update_preview()
-        pixel_array_gray = self.filtered_canvas
+        # Use ROI if a selection exists (otherwise uses full images)
+        canvas_roi, ref_roi = self._apply_selection_roi(self.filtered_canvas, self.filtered_image, is_color_analysis=False)
 
-        # Extract dominant values from canvas and reference
-        self.value_data.canvas_dominant = (self.value_data.extract_dominant(pixel_array_gray, num_values=5))
-        
-        # Create value maps and blob information
-        self.value_data.create_map_with_blobs(pixel_array_gray, use_canvas=True)
-        
-        # Match canvas and reference values using spatial information
+        # Extract reference dominant values from ROI reference (NOT full image)
+        self.value_data.reference_dominant = self.value_data.extract_dominant(ref_roi, num_values=20)
+        self.value_data.create_map_with_blobs(ref_roi, use_canvas=False)
+
+        # Extract canvas dominant values from ROI canvas
+        self.value_data.canvas_dominant = self.value_data.extract_dominant(canvas_roi, num_values=5)
+        self.value_data.create_map_with_blobs(canvas_roi, use_canvas=True)
+
+        # Match only within ROI
         self.match_values(is_color_analysis=False)
-        
+
         # Update UI with value pair widgets
         self.update_pairs(
             self.value_data,
             self.value_pairs_container_layout,
-            lambda v: v, # no transform for raw grayscale levels
+            lambda v: v,
             self.show_pair_regions_value
         )
-        
-        # Create and display the initial overview with all matched pairs
+
+        # Preview should show ROI overlays (or raw ROI if no pairs yet)
         self.show_all_matched_pairs(False)
-        self.value_feedback_label.setText("✅ Found dominant values. Click on any value pair to see detailed comparison.")
-        self.append_log_entry("Get value feedback", "Requested value feedback analysis")
+        self.value_feedback_label.setText("✅ Found dominant values (selection-aware). Click a pair for detailed comparison.")
+
         
     def get_feedback_color(self):
         """Extract dominant colors from the canvas and compare with the reference."""
@@ -745,66 +748,67 @@ class ValueColor(QWidget):
         analysis_image = pixel_array.copy()
         ref_analysis_image = self.color_reference_image.copy()
 
-        # Extract the 15 most dominant values from reference
-        self.color_data.reference_dominant = (
-            self.color_data.extract_dominant(ref_analysis_image, num_values=15)
-        )
-        # Build its reference‐side map & blobs
-        self.color_data.create_map_with_blobs(ref_analysis_image, use_canvas=False)
+        # Use ROI if a selection exists (otherwise uses full images)
+        analysis_roi, ref_roi = self._apply_selection_roi(analysis_image, ref_analysis_image, is_color_analysis=True)
 
-        # Extract the 15 most dominant values from canvas
-        self.color_data.canvas_dominant = (
-            self.color_data.extract_dominant(analysis_image, num_values=6)
-        )
-        self.color_data.create_map_with_blobs(analysis_image, use_canvas=True)
+        # Keep full canvas for coordinate mapping
+        self.color_canvas_image = analysis_image.copy()
+        self.color_filtered_canvas = self.color_canvas_image.copy()
 
-        # Create colors maps and blob information
-        self.color_data.create_map_with_blobs(ref_analysis_image, use_canvas=False)
-        self.color_data.create_map_with_blobs(analysis_image, use_canvas=True)
+        # Use ROI only for analysis
+        analysis_for_analysis = analysis_roi
+        ref_for_analysis = ref_roi
 
-        # Match canvas and reference colors
+        # Extract dominant colors ONLY inside ROI
+        self.color_data.reference_dominant = self.color_data.extract_dominant(ref_for_analysis, num_values=15)
+        self.color_data.create_map_with_blobs(ref_for_analysis, use_canvas=False)
+
+        self.color_data.canvas_dominant = self.color_data.extract_dominant(analysis_for_analysis, num_values=6)
+        self.color_data.create_map_with_blobs(analysis_for_analysis, use_canvas=True)
+
+        # Match + UI
         self.match_values(is_color_analysis=True)
-        
-        # Update UI
+
         self.update_pairs(
             self.color_data,
             self.color_pairs_container_layout,
-            lambda rgb: color_conversion.rgb_to_hsv(rgb),  # convert RGB→HSV for display
+            lambda rgb: color_conversion.rgb_to_hsv(rgb),
             self.show_pair_regions_color
         )
-        
-        # Create and display the initial overview with all matched pairs
+
         self.show_all_matched_pairs(True)
-        text_to_display = "✅ Found dominant colors. Click on any value pair to see detailed comparison."
-        self.color_feedback_label.setText(text_to_display)
-        self.append_log_entry("Get color feedback", "Requested color feedback analysis")
+        self.color_feedback_label.setText("✅ Found dominant colors (selection-aware). Click a pair for detailed comparison.")
+
 
     def show_all_matched_pairs(self, is_color_analysis=False):
         """Show all matched pairs together - reference with canvas regions and canvas with reference regions."""
         if is_color_analysis:
-            # Use color canvas and color reference
+        # Use color canvas and color reference
             if self.color_filtered_canvas is None or self.color_reference_image is None:
                 return
             
-            ref_with_regions = self.color_reference_image.copy()
-            canvas_with_regions = self.color_filtered_canvas.copy()
+            canvas_base, ref_base = self._apply_selection_roi(self.color_filtered_canvas, self.color_reference_image, is_color_analysis=True)
+
+            ref_with_regions = ref_base.copy()
+            canvas_with_regions = canvas_base.copy()
             matched_pairs = self.color_data.matched_pairs
-            
-            # Store canvas for region display
-            canvas_for_mask = self.color_filtered_canvas
-            ref_for_mask = self.color_reference_image
+
+            canvas_for_mask = canvas_base
+            ref_for_mask = ref_base
+
         else:
             # Use grayscale canvas and grayscale reference
             if self.filtered_canvas is None or self.filtered_image is None:
                 return
             
-            ref_with_regions = image_conversion._to_bgr(self.filtered_image)
-            canvas_with_regions = image_conversion._to_bgr(self.filtered_canvas)
+            canvas_base, ref_base = self._apply_selection_roi(self.filtered_canvas, self.filtered_image, is_color_analysis=False)
+
+            ref_with_regions = image_conversion._to_bgr(ref_base)
+            canvas_with_regions = image_conversion._to_bgr(canvas_base)
             matched_pairs = self.value_data.matched_pairs
-            
-            # Store canvas for region display
-            canvas_for_mask = self.filtered_canvas
-            ref_for_mask = self.filtered_image
+
+            canvas_for_mask = canvas_base
+            ref_for_mask = ref_base
 
         # Store 5 colors for getting all matched pairs
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (128, 0, 128)]
@@ -1198,8 +1202,13 @@ class ValueColor(QWidget):
         self.append_log_entry("color feedback", feedback)
 
         # overlay & show
-        self.overlay_and_show(self.color_canvas_image, self.color_reference_image,
-                               canvas_hex, ref_hex, is_color=True)
+        canvas_base, ref_base = self._apply_selection_roi(
+            self.color_canvas_image,
+            self.color_reference_image,
+            is_color_analysis=True
+        )
+        self.overlay_and_show(canvas_base, ref_base, canvas_hex, ref_hex, is_color=True)
+
 
     def show_pair_regions_value(self, canvas_hex, ref_hex):
         """Highlight the selected value pair on canvas and reference, and show feedback."""
@@ -1210,13 +1219,16 @@ class ValueColor(QWidget):
         c_val = next((v for v,h in self.value_data.canvas_dominant    if h==canvas_hex), None)
         r_val = next((v for v,h in self.value_data.reference_dominant if h==ref_hex),    None)
         if c_val is not None and r_val is not None:
-            feedback = text_feedback.get_value_feedback(c_val, r_val)
-            self.value_feedback_label.setText(feedback)
-            self.append_log_entry("value feedback", feedback)
+            self.value_feedback_label.setText(text_feedback.get_value_feedback(c_val, r_val))
 
         # do exactly the same overlay→show, but in grayscale mode
-        self.overlay_and_show(self.filtered_canvas, self.filtered_image,
-                               canvas_hex, ref_hex, is_color=False)
+        canvas_base, ref_base = self._apply_selection_roi(
+            self.filtered_canvas,
+            self.filtered_image,
+            is_color_analysis=False
+        )
+        self.overlay_and_show(canvas_base, ref_base, canvas_hex, ref_hex, is_color=False)
+
         
     def canvasChanged(self, event=None):
         """This method is called whenever the canvas changes. It's required for all DockWidget subclasses in Krita."""
@@ -1427,6 +1439,122 @@ class ValueColor(QWidget):
         pixel_array = cv2.resize(pixel_array, (doc_width//2, doc_height//2), interpolation=cv2.INTER_AREA)
         
         return pixel_array
+    
+    def _get_active_selection(self):
+        """Return Krita selection if it exists and has a non-zero area, else None."""
+        doc = Krita.instance().activeDocument()
+        if not doc:
+            return None
+        sel = doc.selection()
+        if not sel:
+            return None
+
+        # Some Krita builds expose isEmpty(); others you can just check width/height.
+        try:
+            if sel.isEmpty():
+                return None
+        except Exception:
+            pass
+
+        if sel.width() <= 0 or sel.height() <= 0:
+            return None
+
+        return sel
+
+    def _clamp_rect(self, x, y, w, h, max_w, max_h):
+        """Clamp rectangle to image bounds. Returns (x, y, w, h) safe."""
+        x = max(0, min(int(x), max_w))
+        y = max(0, min(int(y), max_h))
+        w = max(0, min(int(w), max_w - x))
+        h = max(0, min(int(h), max_h - y))
+        return x, y, w, h
+
+    def _roi_slices_from_selection(self, canvas_shape, ref_shape, canvas_downsample_factor=0.5):
+        """
+        Map the current document selection bbox into:
+        - canvas image coords (downsampled)
+        - reference image coords (whatever size reference is)
+        Returns:
+        (canvas_y_slice, canvas_x_slice), (ref_y_slice, ref_x_slice)
+        If no selection, returns full slices.
+        """
+        doc = Krita.instance().activeDocument()
+        if not doc:
+            # no doc -> treat as full
+            ch, cw = canvas_shape[:2]
+            rh, rw = ref_shape[:2]
+            return (slice(0, ch), slice(0, cw)), (slice(0, rh), slice(0, rw))
+
+        sel = self._get_active_selection()
+        ch, cw = canvas_shape[:2]
+        rh, rw = ref_shape[:2]
+
+        # Default: full image
+        full_canvas = (slice(0, ch), slice(0, cw))
+        full_ref = (slice(0, rh), slice(0, rw))
+
+        if not sel:
+            return full_canvas, full_ref
+
+        doc_w, doc_h = doc.width(), doc.height()
+        if doc_w <= 0 or doc_h <= 0:
+            return full_canvas, full_ref
+
+        # Selection bbox in doc coords
+        sx, sy, sw, sh = sel.x(), sel.y(), sel.width(), sel.height()
+
+        # Map selection bbox into canvas coords (your canvas arrays are doc/2)
+        cx = sx * canvas_downsample_factor
+        cy = sy * canvas_downsample_factor
+        cw_box = sw * canvas_downsample_factor
+        ch_box = sh * canvas_downsample_factor
+
+        # Map selection bbox into reference coords (based on ref size vs doc size)
+        ref_sx = rw / float(doc_w)
+        ref_sy = rh / float(doc_h)
+
+        rx = sx * ref_sx
+        ry = sy * ref_sy
+        rw_box = sw * ref_sx
+        rh_box = sh * ref_sy
+
+        # Clamp
+        cx, cy, cw_box, ch_box = self._clamp_rect(cx, cy, cw_box, ch_box, cw, ch)
+        rx, ry, rw_box, rh_box = self._clamp_rect(rx, ry, rw_box, rh_box, rw, rh)
+
+        # If selection maps to nothing (tiny selection), fall back to full
+        if cw_box <= 0 or ch_box <= 0 or rw_box <= 0 or rh_box <= 0:
+            return full_canvas, full_ref
+
+        canvas_slice = (slice(cy, cy + ch_box), slice(cx, cx + cw_box))
+        ref_slice = (slice(ry, ry + rh_box), slice(rx, rx + rw_box))
+        return canvas_slice, ref_slice
+
+    def _apply_selection_roi(self, canvas_img, ref_img, is_color_analysis):
+        """
+        Returns (canvas_roi, ref_roi). If no selection, returns originals.
+        Also stores the slices so other UI paths can reuse them.
+        """
+        # Determine which ROI storage to use
+        if is_color_analysis:
+            self._color_roi_slices = None
+        else:
+            self._value_roi_slices = None
+
+        canvas_slice, ref_slice = self._roi_slices_from_selection(
+            canvas_img.shape, ref_img.shape, canvas_downsample_factor=0.5
+        )
+
+        canvas_roi = canvas_img[canvas_slice[0], canvas_slice[1]]
+        ref_roi = ref_img[ref_slice[0], ref_slice[1]]
+
+        if is_color_analysis:
+            self._color_roi_slices = (canvas_slice, ref_slice)
+        else:
+            self._value_roi_slices = (canvas_slice, ref_slice)
+
+        return canvas_roi, ref_roi
+
 
     def show_current_canvas(self):
         """Show the current canvas data in grayscale in the left preview."""
