@@ -1,6 +1,6 @@
 """Main user interface for value and color tabs"""
 
-from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita, ManagedColor
+from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita, ManagedColor, InfoObject
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QSlider, QLabel, QPushButton, QButtonGroup, QRadioButton,
@@ -12,9 +12,12 @@ import sys
 sys.path.append(os.path.expanduser("~/ddraw/lib/python3.10/site-packages"))
 import cv2
 import numpy as np
+from PIL import Image
 import math
 from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import linkage, fcluster
+import json
+from datetime import datetime
 from .category_data import ValueData, ColorData
 from .helpers import color_conversion, image_conversion, matching_algo, text_feedback
 from .helpers.lasso_fill_tool import LassoFillTool
@@ -29,7 +32,7 @@ class ValueButton(QPushButton):
         self.matched_button = None
         self.setMinimumSize(60, 60)
         self.setMaximumSize(60, 60)
-        border_style = "1px solid #888888"
+        border_style = "2px solid #00FF00" if is_reference else "1px solid #888888"
         self.setStyleSheet(f"background-color: {hex_code}; border: {border_style};")
         self.setToolTip(hex_code)
         
@@ -93,7 +96,6 @@ class ValueColor(QWidget):
         self.color_image = None
         self.value_reference_image = None
         self.color_reference_image = None
-        # self.canvas_image = None
 
         # Separate canvas images for color and value
         self.value_canvas_image = None  # Grayscale canvas for value analysis
@@ -124,6 +126,92 @@ class ValueColor(QWidget):
             
     def __del__(self):
         self.cleanup()
+
+    def export_pixmap(self, pixmap, action):
+        """Export a QPixmap as PNG to the logs directory"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        export_folder = os.path.join(home_dir, "ArtKrit_logs", "artkrit_output_images")
+        os.makedirs(export_folder, exist_ok=True)
+
+        filename = os.path.join(export_folder, f"{timestamp}_{safe_action}.png")
+        pixmap.save(filename, "PNG")
+        print(f"Saved filtered image as {filename}")
+
+
+    def export_filtered_image_as_png(self, filtered_image, action):
+        """Export a filtered image as PNG to the logs directory"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        export_folder = os.path.join(home_dir, "ArtKrit_logs", "artkrit_output_images")
+        os.makedirs(export_folder, exist_ok=True)
+
+        img = Image.fromarray(filtered_image)
+        filename = os.path.join(export_folder, f"{timestamp}_{safe_action}.png")
+        img.save(filename)
+        print(f"Saved filtered image as {filename}")
+
+    def save_png_on_button_press(self, action):
+        """Save the current document as PNG when a button is pressed"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action.replace(" ", "_")
+
+        home_dir = os.path.expanduser("~")
+        base_folder = os.path.join(home_dir, "ArtKrit_logs")
+        images_folder = os.path.join(base_folder, "canvas_images")
+        os.makedirs(images_folder, exist_ok=True)
+
+        doc = Krita.instance().activeDocument()
+        if doc is not None:
+            current_path = doc.fileName()
+            if not current_path:
+                print("Please save your document first.")
+                return
+            
+            png_path = os.path.join(images_folder, f"{timestamp}_{safe_action}.png")
+            
+            doc.setBatchmode(True)
+            options = InfoObject()
+            options.setProperty('compression', 5)
+            options.setProperty('alpha', True)
+            doc.exportImage(png_path, options)
+            doc.setBatchmode(False)
+    
+    def get_json_path(self):
+        """Get the path to the logs JSON file"""
+        home_dir = os.path.expanduser("~")
+        logs_folder = os.path.join(home_dir, "ArtKrit_logs")  
+        os.makedirs(logs_folder, exist_ok=True)
+        return os.path.join(logs_folder, "logs.json")
+    
+    def append_log_entry(self, action, message):
+        """Append a log entry to the JSON log file"""
+        self.save_png_on_button_press(action)
+        json_path = self.get_json_path()
+
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {"logs": []}
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        data["logs"].append({
+            "timestamp": timestamp,
+            "action": action,
+            "message": message
+        })
+
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+        print(f"Logged: {action}")
+
 
     def _make_preview_section(self, prefix, left_text, right_text):
         """
@@ -191,14 +279,18 @@ class ValueColor(QWidget):
         pairs_layout.addWidget(scroll)
 
         return pairs_layout
-
+    
     def _make_feedback_label(self, prefix, text):
-        """
-        Creates self.{prefix}_feedback_label with consistent stylesheet
-        and returns it.
-        """
+        """Creates a scrollable feedback label with consistent stylesheet"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(150)  
+        scroll.setMinimumHeight(80)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         lbl = QLabel(text)
-        lbl.setAlignment(Qt.AlignLeft)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lbl.setWordWrap(True)
         lbl.setStyleSheet("""
             QLabel {
@@ -209,14 +301,18 @@ class ValueColor(QWidget):
                 margin: 2px;
             }
         """)
+        
+        scroll.setWidget(lbl)
         setattr(self, f"{prefix}_feedback_label", lbl)
-        return lbl
+        
+        return scroll
 
     # Individual tab-creators
     def create_value_tab(self):
         """Create the tab for value analysis"""
         self.value_tab = QWidget()
         layout = QVBoxLayout(self.value_tab)
+        layout.setAlignment(Qt.AlignTop)
 
         # canvas picker
         btn = QPushButton("Set Current Canvas")
@@ -289,22 +385,32 @@ class ValueColor(QWidget):
             zoom_h.addWidget(btn)
         layout.addLayout(zoom_h)
 
-         # Create color separation UI
-        self.scroll_area, self.image_label = self.color_separation_tool.create_color_separation_ui()
-        layout.addWidget(self.scroll_area)
+        # Button to pop out/dock color separation tool
+        self.color_sep_toggle_btn = QPushButton("↗ Pop Out Color Separation")
+        self.color_sep_toggle_btn.clicked.connect(self.toggle_color_separation_window)
+        layout.addWidget(self.color_sep_toggle_btn)
+
+        # Create color separation UI (initially embedded)
+        self.color_sep_container, self.image_label = self.color_separation_tool.create_color_separation_ui()
+        self.color_sep_parent_layout = layout  # Store reference to parent layout
+        layout.addWidget(self.color_sep_container)
+        
+        # Initialize floating window as None
+        self.color_sep_floating_window = None
+        self.color_sep_is_floating = False
 
         # Color tools & fill options
         tools = QGroupBox("Color Tools")
         tv = QVBoxLayout(tools)
 
-        # # Create the color button and store it as an attribute
+        # Create the color button
         # self.colorButton = QPushButton("Select Color")
         # self.colorButton.clicked.connect(self.selectColor)
         # tv.addWidget(self.colorButton)
         
         # Create the lasso button and store it as an attribute
         self.lassoButton = QPushButton("Lasso Fill Tool")
-        self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)  # Connect to lasso tool method
+        self.lassoButton.clicked.connect(self.lasso_fill_tool.activateLassoTool)
         tv.addWidget(self.lassoButton)
 
         # Get fill widgets from lasso fill tool and add them
@@ -335,13 +441,69 @@ class ValueColor(QWidget):
         self.current_labels = None
         self.current_colors = None
         self.current_groups = None
-             
+
+    def toggle_color_separation_window(self):
+        """Toggle the color separation tool between embedded and floating window"""
+         # Toggle state
+        if self.color_sep_is_floating:
+            self.dock_color_separation()
+            self.append_log_entry("toggle color separation window close", "Toggled color separation tool window state: docked")
+        else:
+            self.pop_out_color_separation()
+            self.append_log_entry("toggle color separation window open", "Toggled color separation tool window state: popped out")
+
+    def pop_out_color_separation(self):
+        """Pop out the color separation tool into a floating window"""
+        # Create floating window
+        self.color_sep_floating_window = QDialog(self)
+        self.color_sep_floating_window.setWindowTitle("Color Separation Tool")
+        self.color_sep_floating_window.resize(800, 600)
+        
+        # Create layout for the dialog
+        dialog_layout = QVBoxLayout(self.color_sep_floating_window)
+        
+        # Remove container from parent and add to dialog
+        self.color_sep_container.setParent(None)
+        dialog_layout.addWidget(self.color_sep_container)
+        
+        # Update button text
+        self.color_sep_toggle_btn.setText("↙ Dock Color Separation")
+        self.color_sep_is_floating = True
+        
+        # Show the window
+        self.color_sep_floating_window.show()
+        
+        # Connect close event to dock back
+        self.color_sep_floating_window.finished.connect(self.on_floating_window_closed)
+
+    def dock_color_separation(self):
+        """Dock the color separation tool back into the color tab"""
+        # Remove from floating window
+        if self.color_sep_floating_window:
+            self.color_sep_container.setParent(None)
+            self.color_sep_floating_window.close()
+            self.color_sep_floating_window = None
+        
+        # Find the position to insert (after the toggle button)
+        toggle_index = self.color_sep_parent_layout.indexOf(self.color_sep_toggle_btn)
+        self.color_sep_parent_layout.insertWidget(toggle_index + 1, self.color_sep_container)
+        
+        # Update button text
+        self.color_sep_toggle_btn.setText("↗ Pop Out Color Separation")
+        self.color_sep_is_floating = False
+
+    def on_floating_window_closed(self):
+        """Handle when the floating window is closed by the user"""
+        if self.color_sep_is_floating:
+            self.dock_color_separation()
+            self.append_log_entry("toggle color separation window close", "Toggled color separation tool window state: docked")
+                
     def process_reference_image(self):
         """Process the stored reference image for color analysis"""
         if hasattr(self, 'color_reference_image') and self.color_reference_image is not None:
-            # Make sure color_separation_tool has been initialized
             if hasattr(self, 'color_separation_tool') and self.color_separation_tool is not None:
                 self.color_separation_tool.process_reference_image(self.color_reference_image)
+                self.append_log_entry("process ref img for color", "Processed reference image for color separation")
 
     def update_cluster_count(self):
         """Recompute dominant color clusters and update the image label accordingly."""
@@ -349,7 +511,7 @@ class ValueColor(QWidget):
             return
 
         self.color_data.reference_dominant = self.color_data.extract_dominant(
-+            self.current_image,
+            self.current_image,
             num_values=15
         )
         dominant_colors = self.color_data.reference_dominant
@@ -392,7 +554,6 @@ class ValueColor(QWidget):
         height, width, channels = rgb_img.shape
         bytes_per_line = channels * width
         qimage = QImage(rgb_img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-
             
         pixmap = QPixmap.fromImage(qimage)
         if is_color:
@@ -437,13 +598,14 @@ class ValueColor(QWidget):
 
     def filter_selected(self, filter_type):
         """Set the active filter type, reveal the slider, and refresh the preview."""
+        self.append_log_entry(f"applying {filter_type} filter", f"Selected filter: {filter_type}")
         self.current_filter = filter_type
         self.slider_label.show()
         self.slider.show()
         self.update_preview()
     
     def update_kernel_size_label(self, value):
-        """Reflect the slider’s value as a percentage in the label text."""
+        """Reflect the slider's value as a percentage in the label text."""
         kernel_percentage = value / 10.0
         self.slider_label.setText(f"Kernel Size (%): {kernel_percentage:.1f}%")
 
@@ -486,6 +648,11 @@ class ValueColor(QWidget):
             self.filtered_canvas = np.zeros_like(self.filtered_image)
         
         self.display_split_view(self.filtered_canvas, self.filtered_image, False)
+        self.export_filtered_image_as_png(self.filtered_image, f"applied_{self.current_filter}_filter_image, with {kernel_size} kernel")
+        self.export_filtered_image_as_png(self.filtered_canvas, f"applied_{self.current_filter}_filter_canvas, with {kernel_size} kernel")
+        self.append_log_entry("Update value preview reference", f"Applied {self.current_filter} filter with kernel size {kernel_size} to reference")
+        self.append_log_entry("Update value preview canvas", f"Applied {self.current_filter} filter with kernel size {kernel_size} to canvas")
+
 
 
     def get_feedback_value(self):
@@ -517,10 +684,6 @@ class ValueColor(QWidget):
             self.value_data.create_map_with_blobs(self.filtered_image, use_canvas=False)
 
         # Get current canvas data
-        # if hasattr(self, 'filtered_canvas') and self.filtered_canvas is not None:
-        #     pixel_array_gray = image_conversion._to_grayscale(self.filtered_canvas)
-        # else:
-        #     pixel_array = self.get_canvas_data()
         pixel_array = self.get_canvas_data()
         if pixel_array is None:
             return
@@ -529,34 +692,30 @@ class ValueColor(QWidget):
         pixel_array_gray = image_conversion._to_grayscale(pixel_array)
         self.value_canvas_image = pixel_array_gray
 
-        # self.canvas_image = pixel_array_gray
         self.update_preview()
-        # Use ROI if a selection exists (otherwise uses full images)
-        canvas_roi, ref_roi = self._apply_selection_roi(self.filtered_canvas, self.filtered_image, is_color_analysis=False)
+        pixel_array_gray = self.filtered_canvas
 
-        # Extract reference dominant values from ROI reference (NOT full image)
-        self.value_data.reference_dominant = self.value_data.extract_dominant(ref_roi, num_values=20)
-        self.value_data.create_map_with_blobs(ref_roi, use_canvas=False)
-
-        # Extract canvas dominant values from ROI canvas
-        self.value_data.canvas_dominant = self.value_data.extract_dominant(canvas_roi, num_values=5)
-        self.value_data.create_map_with_blobs(canvas_roi, use_canvas=True)
-
-        # Match only within ROI
+        # Extract dominant values from canvas and reference
+        self.value_data.canvas_dominant = (self.value_data.extract_dominant(pixel_array_gray, num_values=5))
+        
+        # Create value maps and blob information
+        self.value_data.create_map_with_blobs(pixel_array_gray, use_canvas=True)
+        
+        # Match canvas and reference values using spatial information
         self.match_values(is_color_analysis=False)
-
+        
         # Update UI with value pair widgets
         self.update_pairs(
             self.value_data,
             self.value_pairs_container_layout,
-            lambda v: v,
+            lambda v: v, # no transform for raw grayscale levels
             self.show_pair_regions_value
         )
-
-        # Preview should show ROI overlays (or raw ROI if no pairs yet)
+        
+        # Create and display the initial overview with all matched pairs
         self.show_all_matched_pairs(False)
-        self.value_feedback_label.setText("✅ Found dominant values (selection-aware). Click a pair for detailed comparison.")
-
+        self.value_feedback_label.setText("✅ Found dominant values. Click on any value pair to see detailed comparison.")
+        self.append_log_entry("Get value feedback", "Requested value feedback analysis")
         
     def get_feedback_color(self):
         """Extract dominant colors from the canvas and compare with the reference."""
@@ -586,67 +745,66 @@ class ValueColor(QWidget):
         analysis_image = pixel_array.copy()
         ref_analysis_image = self.color_reference_image.copy()
 
-        # Use ROI if a selection exists (otherwise uses full images)
-        analysis_roi, ref_roi = self._apply_selection_roi(analysis_image, ref_analysis_image, is_color_analysis=True)
+        # Extract the 15 most dominant values from reference
+        self.color_data.reference_dominant = (
+            self.color_data.extract_dominant(ref_analysis_image, num_values=15)
+        )
+        # Build its reference‐side map & blobs
+        self.color_data.create_map_with_blobs(ref_analysis_image, use_canvas=False)
 
-        # Keep full canvas for coordinate mapping
-        self.color_canvas_image = analysis_image.copy()
-        self.color_filtered_canvas = self.color_canvas_image.copy()
+        # Extract the 15 most dominant values from canvas
+        self.color_data.canvas_dominant = (
+            self.color_data.extract_dominant(analysis_image, num_values=6)
+        )
+        self.color_data.create_map_with_blobs(analysis_image, use_canvas=True)
 
-        # Use ROI only for analysis
-        analysis_for_analysis = analysis_roi
-        ref_for_analysis = ref_roi
+        # Create colors maps and blob information
+        self.color_data.create_map_with_blobs(ref_analysis_image, use_canvas=False)
+        self.color_data.create_map_with_blobs(analysis_image, use_canvas=True)
 
-        # Extract dominant colors ONLY inside ROI
-        self.color_data.reference_dominant = self.color_data.extract_dominant(ref_for_analysis, num_values=15)
-        self.color_data.create_map_with_blobs(ref_for_analysis, use_canvas=False)
-
-        self.color_data.canvas_dominant = self.color_data.extract_dominant(analysis_for_analysis, num_values=6)
-        self.color_data.create_map_with_blobs(analysis_for_analysis, use_canvas=True)
-
-        # Match + UI
+        # Match canvas and reference colors
         self.match_values(is_color_analysis=True)
-
+        
+        # Update UI
         self.update_pairs(
             self.color_data,
             self.color_pairs_container_layout,
-            lambda rgb: color_conversion.rgb_to_hsv(rgb),
+            lambda rgb: color_conversion.rgb_to_hsv(rgb),  # convert RGB→HSV for display
             self.show_pair_regions_color
         )
-
+        
+        # Create and display the initial overview with all matched pairs
         self.show_all_matched_pairs(True)
-        self.color_feedback_label.setText("✅ Found dominant colors (selection-aware). Click a pair for detailed comparison.")
-
+        text_to_display = "✅ Found dominant colors. Click on any value pair to see detailed comparison."
+        self.color_feedback_label.setText(text_to_display)
+        self.append_log_entry("Get color feedback", "Requested color feedback analysis")
 
     def show_all_matched_pairs(self, is_color_analysis=False):
         """Show all matched pairs together - reference with canvas regions and canvas with reference regions."""
         if is_color_analysis:
-        # Use color canvas and color reference
+            # Use color canvas and color reference
             if self.color_filtered_canvas is None or self.color_reference_image is None:
                 return
             
-            canvas_base, ref_base = self._apply_selection_roi(self.color_filtered_canvas, self.color_reference_image, is_color_analysis=True)
-
-            ref_with_regions = ref_base.copy()
-            canvas_with_regions = canvas_base.copy()
+            ref_with_regions = self.color_reference_image.copy()
+            canvas_with_regions = self.color_filtered_canvas.copy()
             matched_pairs = self.color_data.matched_pairs
-
-            canvas_for_mask = canvas_base
-            ref_for_mask = ref_base
-
+            
+            # Store canvas for region display
+            canvas_for_mask = self.color_filtered_canvas
+            ref_for_mask = self.color_reference_image
         else:
             # Use grayscale canvas and grayscale reference
             if self.filtered_canvas is None or self.filtered_image is None:
                 return
             
-            canvas_base, ref_base = self._apply_selection_roi(self.filtered_canvas, self.filtered_image, is_color_analysis=False)
-
-            ref_with_regions = image_conversion._to_bgr(ref_base)
-            canvas_with_regions = image_conversion._to_bgr(canvas_base)
+            ref_with_regions = image_conversion._to_bgr(self.filtered_image)
+            canvas_with_regions = image_conversion._to_bgr(self.filtered_canvas)
             matched_pairs = self.value_data.matched_pairs
-
-            canvas_for_mask = canvas_base
-            ref_for_mask = ref_base
+            
+            # Store canvas for region display
+            canvas_for_mask = self.filtered_canvas
+            ref_for_mask = self.filtered_image
 
         # Store 5 colors for getting all matched pairs
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (128, 0, 128)]
@@ -727,6 +885,9 @@ class ValueColor(QWidget):
             right_label.height(), 
             Qt.KeepAspectRatio))
         
+        self.export_filtered_image_as_png(left_display, f"feedback_canvas_{'color' if is_color_analysis else 'value'}")
+        self.export_filtered_image_as_png(right_display, f"feedback_reference_{'color' if is_color_analysis else 'value'}")
+        
     def smooth_contour(self, contour, num_points=100):
         """Smooth a contour using spline interpolation."""
         # Extract points from the contour
@@ -759,7 +920,6 @@ class ValueColor(QWidget):
         smoothed_points = np.array([x_new, y_new]).T.astype(np.int32)
         return smoothed_points.reshape(-1, 1, 2)  # Reshape for polylines function
 
-        
     def match_values(self, is_color_analysis=False):
         """
         Match canvas values to reference values based on spatial and color information.
@@ -859,8 +1019,6 @@ class ValueColor(QWidget):
         - click_fn: either self.show_pair_regions_value or self.show_pair_regions_color
         """
         # Clear existing widgets
-        #    They are in either self.value_pair_widgets or self.color_pair_widgets,
-        #    Iterate container_layout’s children
         while container_layout.count():
             w = container_layout.takeAt(0).widget()
             if w:
@@ -921,7 +1079,7 @@ class ValueColor(QWidget):
                 rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_GRAY2RGB)
             elif rgb_image.shape[2] == 4:  # If RGBA, convert to RGB
                 rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_BGRA2RGB)
-            elif rgb_image.shape[2] == 3 and image is not self.canvas_image:  # If BGR and not canvas, convert to RGB
+            elif rgb_image.shape[2] == 3 and image is not self.color_canvas_image:  # If BGR and not canvas, convert to RGB
                 rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB)
                 
             # Create lower and upper bounds for each channel
@@ -1037,15 +1195,11 @@ class ValueColor(QWidget):
         # feedback label
         feedback = text_feedback.get_color_feedback(color_conversion.rgb_to_hsv(c_rgb), color_conversion.rgb_to_hsv(r_rgb), self.hue_ranges)
         self.color_feedback_label.setText(feedback)
+        self.append_log_entry("color feedback", feedback)
 
         # overlay & show
-        canvas_base, ref_base = self._apply_selection_roi(
-            self.color_canvas_image,
-            self.color_reference_image,
-            is_color_analysis=True
-        )
-        self.overlay_and_show(canvas_base, ref_base, canvas_hex, ref_hex, is_color=True)
-
+        self.overlay_and_show(self.color_canvas_image, self.color_reference_image,
+                               canvas_hex, ref_hex, is_color=True)
 
     def show_pair_regions_value(self, canvas_hex, ref_hex):
         """Highlight the selected value pair on canvas and reference, and show feedback."""
@@ -1056,23 +1210,20 @@ class ValueColor(QWidget):
         c_val = next((v for v,h in self.value_data.canvas_dominant    if h==canvas_hex), None)
         r_val = next((v for v,h in self.value_data.reference_dominant if h==ref_hex),    None)
         if c_val is not None and r_val is not None:
-            self.value_feedback_label.setText(text_feedback.get_value_feedback(c_val, r_val))
+            feedback = text_feedback.get_value_feedback(c_val, r_val)
+            self.value_feedback_label.setText(feedback)
+            self.append_log_entry("value feedback", feedback)
 
         # do exactly the same overlay→show, but in grayscale mode
-        canvas_base, ref_base = self._apply_selection_roi(
-            self.filtered_canvas,
-            self.filtered_image,
-            is_color_analysis=False
-        )
-        self.overlay_and_show(canvas_base, ref_base, canvas_hex, ref_hex, is_color=False)
-
+        self.overlay_and_show(self.filtered_canvas, self.filtered_image,
+                               canvas_hex, ref_hex, is_color=False)
         
     def canvasChanged(self, event=None):
         """This method is called whenever the canvas changes. It's required for all DockWidget subclasses in Krita."""
         pass
     
     def selectColor(self):
-        """Open the HS color picker and apply the chosen color to Krita’s foreground."""
+        """Open the HS color picker and apply the chosen color to Krita's foreground."""
         dialog = CustomHSColorPickerDialog(self)
         dialog.exec_()
         
@@ -1091,9 +1242,10 @@ class ValueColor(QWidget):
                     1.0
                 ])
                 view.setForeGroundColor(managedColor)
+                self.append_log_entry("color picker", f"Foreground color set to {selectedColor.name()}")
 
     def activateLassoTool(self):
-        """Activate Krita’s lasso selection tool and prepare the fill options UI."""
+        """Activate Krita's lasso selection tool and prepare the fill options UI."""
         krita_instance = Krita.instance()
         
         action = krita_instance.action('KisToolSelectContiguous')
@@ -1106,9 +1258,10 @@ class ValueColor(QWidget):
             self.selectionTimer.start(500)
             
             QTimer.singleShot(500, lambda: self.lassoButton.setStyleSheet(""))
-    
+           
+
     def selectFillColor(self):
-        """Open the HS picker seeded by the current selection’s average value."""
+        """Open the HS picker seeded by the current selection's average value."""
         # Extract the dominant value from the selection
         doc = Krita.instance().activeDocument()
         if doc:
@@ -1124,6 +1277,7 @@ class ValueColor(QWidget):
                     if selectedColor.isValid():
                         self.currentFillColor = selectedColor
                         self.fillColorButton.setStyleSheet(f"background-color: {selectedColor.name()};")
+                       
 
     def fillSelection(self):
         """Fill the current selection with the selected fill color."""
@@ -1166,6 +1320,7 @@ class ValueColor(QWidget):
                 fillToolAction.trigger()
                 
                 QTimer.singleShot(100, lambda: self.triggerFillForeground(krita_instance))
+                
             else:
                 print("Could not find fill tool action")
 
@@ -1242,6 +1397,7 @@ class ValueColor(QWidget):
             int(self.image_label.maximumHeight() * 1.2)
         )
         self.image_label.update()
+        self.append_log_entry("zoom in", "Zoomed in on image preview")
 
     def zoom_out(self):
         """Zoom out on the image"""
@@ -1254,6 +1410,7 @@ class ValueColor(QWidget):
             int(self.image_label.maximumHeight() / 1.2)
         )
         self.image_label.update()
+        self.append_log_entry("zoom out", "Zoomed out on image preview")
 
     def get_canvas_data(self):
         """Get the current canvas data as a numpy array."""
@@ -1270,122 +1427,6 @@ class ValueColor(QWidget):
         pixel_array = cv2.resize(pixel_array, (doc_width//2, doc_height//2), interpolation=cv2.INTER_AREA)
         
         return pixel_array
-    
-    def _get_active_selection(self):
-        """Return Krita selection if it exists and has a non-zero area, else None."""
-        doc = Krita.instance().activeDocument()
-        if not doc:
-            return None
-        sel = doc.selection()
-        if not sel:
-            return None
-
-        # Some Krita builds expose isEmpty(); others you can just check width/height.
-        try:
-            if sel.isEmpty():
-                return None
-        except Exception:
-            pass
-
-        if sel.width() <= 0 or sel.height() <= 0:
-            return None
-
-        return sel
-
-    def _clamp_rect(self, x, y, w, h, max_w, max_h):
-        """Clamp rectangle to image bounds. Returns (x, y, w, h) safe."""
-        x = max(0, min(int(x), max_w))
-        y = max(0, min(int(y), max_h))
-        w = max(0, min(int(w), max_w - x))
-        h = max(0, min(int(h), max_h - y))
-        return x, y, w, h
-
-    def _roi_slices_from_selection(self, canvas_shape, ref_shape, canvas_downsample_factor=0.5):
-        """
-        Map the current document selection bbox into:
-        - canvas image coords (downsampled)
-        - reference image coords (whatever size reference is)
-        Returns:
-        (canvas_y_slice, canvas_x_slice), (ref_y_slice, ref_x_slice)
-        If no selection, returns full slices.
-        """
-        doc = Krita.instance().activeDocument()
-        if not doc:
-            # no doc -> treat as full
-            ch, cw = canvas_shape[:2]
-            rh, rw = ref_shape[:2]
-            return (slice(0, ch), slice(0, cw)), (slice(0, rh), slice(0, rw))
-
-        sel = self._get_active_selection()
-        ch, cw = canvas_shape[:2]
-        rh, rw = ref_shape[:2]
-
-        # Default: full image
-        full_canvas = (slice(0, ch), slice(0, cw))
-        full_ref = (slice(0, rh), slice(0, rw))
-
-        if not sel:
-            return full_canvas, full_ref
-
-        doc_w, doc_h = doc.width(), doc.height()
-        if doc_w <= 0 or doc_h <= 0:
-            return full_canvas, full_ref
-
-        # Selection bbox in doc coords
-        sx, sy, sw, sh = sel.x(), sel.y(), sel.width(), sel.height()
-
-        # Map selection bbox into canvas coords (your canvas arrays are doc/2)
-        cx = sx * canvas_downsample_factor
-        cy = sy * canvas_downsample_factor
-        cw_box = sw * canvas_downsample_factor
-        ch_box = sh * canvas_downsample_factor
-
-        # Map selection bbox into reference coords (based on ref size vs doc size)
-        ref_sx = rw / float(doc_w)
-        ref_sy = rh / float(doc_h)
-
-        rx = sx * ref_sx
-        ry = sy * ref_sy
-        rw_box = sw * ref_sx
-        rh_box = sh * ref_sy
-
-        # Clamp
-        cx, cy, cw_box, ch_box = self._clamp_rect(cx, cy, cw_box, ch_box, cw, ch)
-        rx, ry, rw_box, rh_box = self._clamp_rect(rx, ry, rw_box, rh_box, rw, rh)
-
-        # If selection maps to nothing (tiny selection), fall back to full
-        if cw_box <= 0 or ch_box <= 0 or rw_box <= 0 or rh_box <= 0:
-            return full_canvas, full_ref
-
-        canvas_slice = (slice(cy, cy + ch_box), slice(cx, cx + cw_box))
-        ref_slice = (slice(ry, ry + rh_box), slice(rx, rx + rw_box))
-        return canvas_slice, ref_slice
-
-    def _apply_selection_roi(self, canvas_img, ref_img, is_color_analysis):
-        """
-        Returns (canvas_roi, ref_roi). If no selection, returns originals.
-        Also stores the slices so other UI paths can reuse them.
-        """
-        # Determine which ROI storage to use
-        if is_color_analysis:
-            self._color_roi_slices = None
-        else:
-            self._value_roi_slices = None
-
-        canvas_slice, ref_slice = self._roi_slices_from_selection(
-            canvas_img.shape, ref_img.shape, canvas_downsample_factor=0.5
-        )
-
-        canvas_roi = canvas_img[canvas_slice[0], canvas_slice[1]]
-        ref_roi = ref_img[ref_slice[0], ref_slice[1]]
-
-        if is_color_analysis:
-            self._color_roi_slices = (canvas_slice, ref_slice)
-        else:
-            self._value_roi_slices = (canvas_slice, ref_slice)
-
-        return canvas_roi, ref_roi
-
 
     def show_current_canvas(self):
         """Show the current canvas data in grayscale in the left preview."""
@@ -1394,7 +1435,6 @@ class ValueColor(QWidget):
             self.value_feedback_label.setText("⚠️ No document is open")
             return
 
-        # self.canvas_image = image_conversion._to_grayscale(pixel_array)
         self.value_canvas_image = image_conversion._to_grayscale(pixel_array)
 
         # Apply default Gaussian filter if no filter is selected
@@ -1409,8 +1449,8 @@ class ValueColor(QWidget):
         
         # Display the grayscale image
         self.display_preview(self.value_canvas_image, False)
-        # self.value_feedback_label.setText("✅ Showing current canvas in grayscale")
-
+        self.value_feedback_label.setText("✅ Showing current canvas in grayscale")
+        self.append_log_entry("set canvas for value", "Set current canvas for value analysis")
 
 
 class CustomHSColorPickerDialog(QDialog):
@@ -1591,4 +1631,3 @@ class SaturationValuePicker(QWidget):
         Get the currently selected color.
         """
         return QColor.fromHsv(self.hue, self.saturation, self.value)
-    
